@@ -1,65 +1,87 @@
+﻿"use client";
+
+import { useState } from "react";
 import Image from "next/image";
+import ExcelUploader from "@/components/ExcelUploader";
+import DataPreview from "@/components/DataPreview";
+import ChatInterface from "@/components/ChatInterface";
+import type { ExcelData } from "@/lib/types";
 
 export default function Home() {
+  const [excelFiles, setExcelFiles] = useState<ExcelData[]>([]);
+
+  const handleAdd = (data: ExcelData) => {
+    setExcelFiles((prev) => [...prev, data]);
+  };
+
+  const handleUpdate = (id: string, patch: Partial<ExcelData>) => {
+    setExcelFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  };
+
+  const handleRemove = async (id: string) => {
+    setExcelFiles((prev) => prev.filter((f) => f.id !== id));
+    try {
+      await fetch(`/api/embed?fileId=${encodeURIComponent(id)}`, { method: "DELETE" });
+    } catch {
+      // UI에서는 이미 제거됨 — 인덱스 정리 실패는 무시
+    }
+  };
+
+  const handleClearAll = async () => {
+    const ids = excelFiles.map((f) => f.id);
+    setExcelFiles([]);
+    await Promise.all(
+      ids.map((id) =>
+        fetch(`/api/embed?fileId=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => undefined)
+      )
+    );
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="flex h-screen flex-col bg-slate-50">
+      <header className="shrink-0 border-b border-slate-200 bg-white px-6 py-4">
+        <div className="flex items-center gap-3">
+          <Image
+            src="/LOGO.svg"
+            alt="SEE:SIGN"
+            width={154}
+            height={38}
+            priority
+            className="h-9 w-auto"
+          />
+          <div>
+            <h1 className="text-lg font-bold text-slate-900 leading-tight">SEE:SIGN CHAT</h1>
+            <p className="text-xs text-slate-500">데이터와 대화하세요.</p>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+      </header>
+
+      <div className="flex flex-1 min-h-0">
+        <aside className="w-80 shrink-0 border-r border-slate-200 bg-white flex flex-col overflow-hidden">
+          <div className="p-4 border-b border-slate-100">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
+              대화할 파일 업로드
+            </h2>
+            <ExcelUploader
+              files={excelFiles}
+              onAdd={handleAdd}
+              onUpdate={handleUpdate}
+              onRemove={handleRemove}
+              onClearAll={handleClearAll}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+          </div>
+
+          {excelFiles.length > 0 && (
+            <div className="flex-1 overflow-y-auto p-4">
+              <DataPreview files={excelFiles} />
+            </div>
+          )}
+        </aside>
+
+        <main className="flex flex-1 flex-col min-w-0 bg-white">
+          <ChatInterface excelFiles={excelFiles} />
+        </main>
+      </div>
     </div>
   );
 }
