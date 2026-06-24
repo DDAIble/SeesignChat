@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { parseExcelBuffer } from "@/lib/excel";
+import { storeUploadData } from "@/lib/upload-data-store";
 
 export const maxDuration = 300;
 
@@ -23,6 +24,7 @@ export async function POST(request: NextRequest) {
 
     const buffer = await file.arrayBuffer();
     const data = parseExcelBuffer(buffer, file.name);
+    storeUploadData(data);
 
     return NextResponse.json({ data });
   } catch (error) {

@@ -150,7 +150,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
     turnFollowUpRef.current = null;
     sendMessage(
       { text },
-      { body: { excelFiles } }
+      { body: { fileIds: excelFiles.map((f) => f.id) } }
     );
     setInput("");
   };

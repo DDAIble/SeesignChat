@@ -1,15 +1,20 @@
 import { NextRequest } from "next/server";
 import { indexExcelFile } from "@/lib/rag";
+import { getUploadData, removeUploadData } from "@/lib/upload-data-store";
 import type { ExcelData } from "@/lib/types";
 
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   try {
-    const { data } = (await request.json()) as { data: ExcelData };
+    const body = (await request.json()) as { data?: ExcelData; fileId?: string };
+    const data = body.fileId ? getUploadData(body.fileId) : body.data;
 
     if (!data?.id) {
-      return Response.json({ error: "유효한 파일 데이터가 없습니다." }, { status: 400 });
+      const message = body.fileId
+        ? "서버에서 파일 데이터를 찾을 수 없습니다. 파일을 다시 업로드해 주세요."
+        : "유효한 파일 데이터가 없습니다.";
+      return Response.json({ error: message }, { status: body.fileId ? 404 : 400 });
     }
 
     const encoder = new TextEncoder();
@@ -59,6 +64,7 @@ export async function DELETE(request: NextRequest) {
 
     const { removeFileIndex } = await import("@/lib/rag");
     const removed = removeFileIndex(fileId);
+    removeUploadData(fileId);
     return Response.json({ fileId, removed });
   } catch (error) {
     console.error("Embed delete error:", error);

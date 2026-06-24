@@ -219,9 +219,10 @@ ${dataContext}
 
 export async function POST(request: Request) {
   try {
-    const { messages, excelFiles } = (await request.json()) as {
+    const { messages, excelFiles, fileIds } = (await request.json()) as {
       messages: UIMessage[];
-      excelFiles: ExcelData[];
+      excelFiles?: ExcelData[];
+      fileIds?: string[];
     };
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -236,15 +237,29 @@ export async function POST(request: Request) {
     const google = createGoogleGenerativeAI({ apiKey });
     const model = google(modelId);
 
-    if (!excelFiles || excelFiles.length === 0) {
-      return new Response(
-        JSON.stringify({ error: "먼저 엑셀 파일을 업로드해 주세요." }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
+    const { getExcelFilesByIds } = await import("@/lib/upload-data-store");
+    const resolvedFiles =
+      fileIds && fileIds.length > 0
+        ? getExcelFilesByIds(fileIds)
+        : excelFiles && excelFiles.length > 0
+          ? excelFiles
+          : undefined;
+
+    if (!resolvedFiles || resolvedFiles.length === 0) {
+      const error =
+        fileIds && fileIds.length > 0
+          ? "서버에서 파일 데이터를 찾을 수 없습니다. Vercel 재시작 후에는 파일을 다시 업로드해 주세요."
+          : "먼저 엑셀 파일을 업로드해 주세요.";
+      return new Response(JSON.stringify({ error }), {
+        status: fileIds && fileIds.length > 0 ? 404 : 400,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
+    const excelFilesResolved = resolvedFiles;
+
     const userTexts = getUserMessageTexts(messages);
-    const uploads = summarizeUploads(excelFiles);
+    const uploads = summarizeUploads(excelFilesResolved);
 
     const stream = createUIMessageStream({
       originalMessages: messages,
@@ -299,7 +314,7 @@ export async function POST(request: Request) {
           trace.patchStep("qa-report", { status: "running" });
         }
 
-        const { text: baseContext, meta: contextMeta } = buildAIContext(excelFiles, userTexts);
+        const { text: baseContext, meta: contextMeta } = buildAIContext(excelFilesResolved, userTexts);
 
         if (uploads.communityRows > 0) {
           trace.patchStep("community-stats", { status: "done" });
@@ -311,7 +326,7 @@ export async function POST(request: Request) {
 
         let dataContext = baseContext;
         const userQuery = getLatestUserQuery(messages);
-        const fileIds = excelFiles.map((file) => file.id);
+        const ragFileIds = excelFilesResolved.map((file) => file.id);
 
         trace.upsertStep({
           id: "rag",
@@ -321,7 +336,7 @@ export async function POST(request: Request) {
         });
         trace.setHeadline("질문과 관련된 데이터를 검색하고 있습니다…");
 
-        const rag = await searchRelevantChunks(fileIds, userQuery);
+        const rag = await searchRelevantChunks(ragFileIds, userQuery);
         dataContext = appendRAGContext(baseContext, rag.contextText, contextMeta, rag.chunks.length);
 
         if (rag.citations.length > 0) {
@@ -348,7 +363,7 @@ export async function POST(request: Request) {
         });
         trace.setHeadline("분석 결과를 바탕으로 답변을 작성하고 있습니다…");
 
-        const systemPrompt = buildSystemPrompt(excelFiles, dataContext, contextMeta);
+        const systemPrompt = buildSystemPrompt(excelFilesResolved, dataContext, contextMeta);
         const result = streamText({
           model,
           system: systemPrompt,

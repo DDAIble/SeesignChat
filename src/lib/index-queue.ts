@@ -77,12 +77,17 @@ async function runIndexJob(job: IndexJob): Promise<void> {
     const embedRes = await fetch("/api/embed", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ data }),
+      body: JSON.stringify({ fileId: data.id }),
     });
 
     const contentType = embedRes.headers.get("content-type") ?? "";
 
     if (!embedRes.ok) {
+      if (embedRes.status === 413) {
+        throw new Error(
+          "파일이 너무 커서 학습 요청 한도를 초과했습니다. 파일을 나누거나 서버 용량이 큰 환경(Cloud Run 등)으로 배포해 주세요."
+        );
+      }
       const embedJson = await readJsonResponse<{ error?: string }>(embedRes).catch(
         () => ({ error: "파일 학습에 실패했습니다." })
       );
