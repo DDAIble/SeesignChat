@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import ExcelUploader from "@/components/ExcelUploader";
 import DataPreview from "@/components/DataPreview";
 import ChatInterface from "@/components/ChatInterface";
@@ -37,22 +39,33 @@ export default function Home() {
     );
   };
 
+  const aibleBoxUrl = process.env.NEXT_PUBLIC_AIBLE_BOX_URL ?? "http://localhost:3000";
+
   return (
     <div className="flex h-screen flex-col bg-slate-50">
       <header className="shrink-0 border-b border-slate-200 bg-white px-6 py-4">
-        <div className="flex items-center gap-3">
-          <Image
-            src="/LOGO.svg"
-            alt="SEE:SIGN"
-            width={154}
-            height={38}
-            priority
-            className="h-9 w-auto"
-          />
-          <div>
-            <h1 className="text-lg font-bold text-slate-900 leading-tight">SEE:SIGN CHAT</h1>
-            <p className="text-xs text-slate-500">데이터와 대화하세요.</p>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Image
+              src="/LOGO.svg"
+              alt="SEE:SIGN"
+              width={154}
+              height={38}
+              priority
+              className="h-9 w-auto"
+            />
+            <div>
+              <h1 className="text-lg font-bold text-slate-900 leading-tight">SEE:SIGN CHAT</h1>
+              <p className="text-xs text-slate-500">데이터와 대화하세요.</p>
+            </div>
           </div>
+          <Link
+            href={aibleBoxUrl}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            AiBle BOX
+          </Link>
         </div>
       </header>
 

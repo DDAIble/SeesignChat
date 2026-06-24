@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { Upload, FileSpreadsheet, Loader2, X, Plus } from "lucide-react";
 import { enqueueFileIndex } from "@/lib/index-queue";
+import { readJsonResponse } from "@/lib/fetch-json";
 import type { ExcelData } from "@/lib/types";
 
 const MAX_FILES = 10;
@@ -44,7 +45,7 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
       body: formData,
     });
 
-    const json = await res.json();
+    const json = await readJsonResponse<{ data?: ExcelData; error?: string }>(res);
 
     if (!res.ok) {
       throw new Error(json.error || "업로드 실패");

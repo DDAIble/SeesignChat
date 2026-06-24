@@ -3,15 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3001",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 3001",
     "lint": "eslint"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.80",
     "@ai-sdk/react": "^3.0.201",
     "ai": "^6.0.199",
+    "html2canvas-pro": "^2.2.0",
+    "jspdf": "^4.2.1",
     "katex": "^0.17.0",
     "lucide-react": "^1.17.0",
     "next": "16.2.9",

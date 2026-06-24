@@ -12,6 +12,7 @@ import { computeAggregateLearningProgress } from "@/lib/learning-progress";
 import { isAnalysisTraceData, type AnalysisTraceData } from "@/lib/analysis-trace";
 import { isCitationData, type CitationSource } from "@/lib/citations";
 import FollowUpQuestions from "@/components/FollowUpQuestions";
+import AnswerExportActions from "@/components/AnswerExportActions";
 import { isFollowUpQuestionsData } from "@/lib/follow-up-questions";
 import type { ExcelData } from "@/lib/types";
 
@@ -214,7 +215,12 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
           </div>
         )}
 
-        {messages.map((msg) => (
+        {messages.map((msg) => {
+          const messageText = getMessageText(msg);
+          const isStreamingThis =
+            isLoading && msg.role === "assistant" && msg.id === lastAssistantMessage?.id;
+
+          return (
           <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
             <div
               className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
@@ -236,9 +242,11 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
             >
               {msg.role === "assistant" ? (
                 <>
-                  <MarkdownContent content={getMessageText(msg)} />
+                  <AnswerExportActions content={messageText} disabled={isStreamingThis}>
+                    <MarkdownContent content={messageText} />
+                  </AnswerExportActions>
                   <CitationListPanel
-                    content={getMessageText(msg)}
+                    content={messageText}
                     citations={citationsByMessageId[msg.id] ?? []}
                   />
                   {msg.id === lastAssistantMessage?.id && (
@@ -250,11 +258,12 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
                   )}
                 </>
               ) : (
-                getMessageText(msg)
+                messageText
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
 
         {isLoading && analysisTrace && (
           <div className="flex gap-3">

@@ -1,5 +1,6 @@
 import type { ExcelData } from "@/lib/types";
 import { progressFromServerEvent } from "@/lib/learning-progress";
+import { readJsonResponse } from "@/lib/fetch-json";
 
 const MAX_CONCURRENT_FILE_INDEX = 2;
 
@@ -34,13 +35,33 @@ async function consumeNdjsonStream(
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      onEvent(JSON.parse(trimmed) as Record<string, unknown>);
+      if (trimmed.startsWith("<") || trimmed.startsWith("Server ")) {
+        throw new Error(
+          "파일 학습 API가 비정상 응답을 반환했습니다. 개발 서버를 재시작해 주세요."
+        );
+      }
+      try {
+        onEvent(JSON.parse(trimmed) as Record<string, unknown>);
+      } catch {
+        throw new Error(
+          `학습 진행 응답을 해석하지 못했습니다: ${trimmed.slice(0, 80)}`
+        );
+      }
     }
   }
 
   const tail = buffer.trim();
   if (tail) {
-    onEvent(JSON.parse(tail) as Record<string, unknown>);
+    if (tail.startsWith("<") || tail.startsWith("Server ")) {
+      throw new Error(
+        "파일 학습 API가 비정상 응답을 반환했습니다. 개발 서버를 재시작해 주세요."
+      );
+    }
+    try {
+      onEvent(JSON.parse(tail) as Record<string, unknown>);
+    } catch {
+      throw new Error(`학습 진행 응답을 해석하지 못했습니다: ${tail.slice(0, 80)}`);
+    }
   }
 }
 
@@ -62,14 +83,14 @@ async function runIndexJob(job: IndexJob): Promise<void> {
     const contentType = embedRes.headers.get("content-type") ?? "";
 
     if (!embedRes.ok) {
-      const embedJson = await embedRes.json().catch(() => ({}));
-      throw new Error(
-        (embedJson as { error?: string }).error || "파일 학습에 실패했습니다."
+      const embedJson = await readJsonResponse<{ error?: string }>(embedRes).catch(
+        () => ({ error: "파일 학습에 실패했습니다." })
       );
+      throw new Error(embedJson.error || "파일 학습에 실패했습니다.");
     }
 
     if (!contentType.includes("ndjson")) {
-      const embedJson = (await embedRes.json()) as { chunkCount?: number };
+      const embedJson = await readJsonResponse<{ chunkCount?: number }>(embedRes);
       onUpdate(data.id, {
         indexStatus: "ready",
         indexedChunks: embedJson.chunkCount ?? 0,
