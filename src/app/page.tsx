@@ -39,7 +39,7 @@ export default function Home() {
     );
   };
 
-  const aibleBoxUrl = process.env.NEXT_PUBLIC_AIBLE_BOX_URL ?? "http://localhost:3000";
+  const aibleBoxUrl = process.env.NEXT_PUBLIC_AIBLE_BOX_URL ?? "https://ddaible.github.io/AibleBox/";
 
   return (
     <div className="flex h-screen flex-col bg-slate-50">
