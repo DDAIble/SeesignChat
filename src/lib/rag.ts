@@ -32,6 +32,14 @@ export function removeFileIndex(fileId: string): number {
   return getVectorStore().removeFile(fileId);
 }
 
+export async function ensureFilesIndexed(files: ExcelData[]): Promise<void> {
+  for (const file of files) {
+    if (!isFileIndexed(file.id)) {
+      await indexExcelFile(file);
+    }
+  }
+}
+
 export async function indexExcelFile(
   data: ExcelData,
   onProgress?: (progress: IndexProgress) => void

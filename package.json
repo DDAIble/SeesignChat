@@ -11,6 +11,7 @@
   "dependencies": {
     "@ai-sdk/google": "^3.0.80",
     "@ai-sdk/react": "^3.0.201",
+    "@vercel/blob": "^2.4.1",
     "ai": "^6.0.199",
     "html2canvas-pro": "^2.2.0",
     "jspdf": "^4.2.1",

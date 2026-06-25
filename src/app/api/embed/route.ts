@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { indexExcelFile } from "@/lib/rag";
-import { getUploadData, removeUploadData } from "@/lib/upload-data-store";
+import { resolveUploadData, removePersistedUploadData } from "@/lib/upload-persistence";
 import type { ExcelData } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -8,7 +8,7 @@ export const maxDuration = 300;
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as { data?: ExcelData; fileId?: string };
-    const data = body.fileId ? getUploadData(body.fileId) : body.data;
+    const data = body.fileId ? await resolveUploadData(body.fileId) : body.data;
 
     if (!data?.id) {
       const message = body.fileId
@@ -64,7 +64,7 @@ export async function DELETE(request: NextRequest) {
 
     const { removeFileIndex } = await import("@/lib/rag");
     const removed = removeFileIndex(fileId);
-    removeUploadData(fileId);
+    await removePersistedUploadData(fileId);
     return Response.json({ fileId, removed });
   } catch (error) {
     console.error("Embed delete error:", error);

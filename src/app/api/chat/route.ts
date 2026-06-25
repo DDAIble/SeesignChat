@@ -237,19 +237,17 @@ export async function POST(request: Request) {
     const google = createGoogleGenerativeAI({ apiKey });
     const model = google(modelId);
 
-    const { getExcelFilesByIds } = await import("@/lib/upload-data-store");
-    const resolvedFiles =
-      fileIds && fileIds.length > 0
-        ? getExcelFilesByIds(fileIds)
-        : excelFiles && excelFiles.length > 0
-          ? excelFiles
-          : undefined;
+    const { resolveExcelFiles } = await import("@/lib/upload-persistence");
+    const { ensureFilesIndexed } = await import("@/lib/rag");
+    const resolvedFiles = await resolveExcelFiles(fileIds, excelFiles);
 
     if (!resolvedFiles || resolvedFiles.length === 0) {
-      const error =
-        fileIds && fileIds.length > 0
-          ? "서버에서 파일 데이터를 찾을 수 없습니다. Vercel 재시작 후에는 파일을 다시 업로드해 주세요."
-          : "먼저 엑셀 파일을 업로드해 주세요.";
+      const blobConfigured = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+      const error = fileIds && fileIds.length > 0
+        ? blobConfigured
+          ? "서버에서 파일 데이터를 찾을 수 없습니다. 파일을 다시 업로드해 주세요."
+          : "서버에서 파일 데이터를 찾을 수 없습니다. Vercel 프로젝트에 Blob 스토어를 연결한 뒤 다시 배포해 주세요."
+        : "먼저 엑셀 파일을 업로드해 주세요.";
       return new Response(JSON.stringify({ error }), {
         status: fileIds && fileIds.length > 0 ? 404 : 400,
         headers: { "Content-Type": "application/json" },
@@ -335,6 +333,8 @@ export async function POST(request: Request) {
           detail: "질문을 임베딩해 관련 행을 찾는 중…",
         });
         trace.setHeadline("질문과 관련된 데이터를 검색하고 있습니다…");
+
+        await ensureFilesIndexed(excelFilesResolved);
 
         const rag = await searchRelevantChunks(ragFileIds, userQuery);
         dataContext = appendRAGContext(baseContext, rag.contextText, contextMeta, rag.chunks.length);
