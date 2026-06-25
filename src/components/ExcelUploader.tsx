@@ -2,8 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { Upload, FileSpreadsheet, Loader2, X, Plus } from "lucide-react";
-import { enqueueFileIndex } from "@/lib/index-queue";
-import { readJsonResponse } from "@/lib/fetch-json";
+import { uploadAndIndexFile } from "@/lib/upload-and-index";
 import type { ExcelData } from "@/lib/types";
 
 const MAX_FILES = 10;
@@ -22,37 +21,12 @@ function isValidExcelFile(file: File): boolean {
   return VALID_EXTENSIONS.includes(ext);
 }
 
-function indexFileInBackground(
-  data: ExcelData,
-  onUpdate: (id: string, patch: Partial<ExcelData>) => void
-) {
-  enqueueFileIndex(data, onUpdate);
-}
-
 export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClearAll }: ExcelUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const remainingSlots = MAX_FILES - files.length;
-
-  const parseUploadedFile = async (file: File): Promise<ExcelData> => {
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const res = await fetch("/api/upload", {
-      method: "POST",
-      body: formData,
-    });
-
-    const json = await readJsonResponse<{ data?: ExcelData; error?: string }>(res);
-
-    if (!res.ok) {
-      throw new Error(json.error || "업로드 실패");
-    }
-
-    return json.data as ExcelData;
-  };
 
   const handleFiles = useCallback(
     async (fileList: FileList | File[]) => {
@@ -78,9 +52,12 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
 
       try {
         for (const file of toUpload) {
-          const data = await parseUploadedFile(file);
-          onAdd({ ...data, indexStatus: "indexing", indexProgress: { phase: "chunk", percent: 2 } });
-          indexFileInBackground(data, onUpdate);
+          try {
+            await uploadAndIndexFile(file, onAdd, onUpdate);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "업로드 중 오류가 발생했습니다.";
+            setError(message);
+          }
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "업로드 중 오류가 발생했습니다.");

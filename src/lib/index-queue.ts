@@ -1,6 +1,7 @@
 import type { ExcelData } from "@/lib/types";
 import { progressFromServerEvent } from "@/lib/learning-progress";
 import { readJsonResponse } from "@/lib/fetch-json";
+import { consumeNdjsonStream } from "@/lib/ndjson-stream";
 
 const MAX_CONCURRENT_FILE_INDEX = 1;
 const EMBED_BODY_LIMIT_BYTES = 4_000_000;
@@ -50,59 +51,6 @@ type IndexJob = {
 
 const queue: IndexJob[] = [];
 let running = 0;
-
-async function consumeNdjsonStream(
-  response: Response,
-  onEvent: (event: Record<string, unknown>) => void
-): Promise<void> {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error("학습 응답 스트림을 읽을 수 없습니다.");
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      if (trimmed.startsWith("<") || trimmed.startsWith("Server ")) {
-        throw new Error(
-          "파일 학습 API가 비정상 응답을 반환했습니다. 개발 서버를 재시작해 주세요."
-        );
-      }
-      try {
-        onEvent(JSON.parse(trimmed) as Record<string, unknown>);
-      } catch {
-        throw new Error(
-          `학습 진행 응답을 해석하지 못했습니다: ${trimmed.slice(0, 80)}`
-        );
-      }
-    }
-  }
-
-  const tail = buffer.trim();
-  if (tail) {
-    if (tail.startsWith("<") || tail.startsWith("Server ")) {
-      throw new Error(
-        "파일 학습 API가 비정상 응답을 반환했습니다. 개발 서버를 재시작해 주세요."
-      );
-    }
-    try {
-      onEvent(JSON.parse(tail) as Record<string, unknown>);
-    } catch {
-      throw new Error(`학습 진행 응답을 해석하지 못했습니다: ${tail.slice(0, 80)}`);
-    }
-  }
-}
 
 async function runIndexJob(job: IndexJob): Promise<void> {
   const { data, onUpdate } = job;
@@ -200,6 +148,7 @@ function pumpQueue(): void {
   }
 }
 
+/** 업로드 시 학습 실패한 파일만 수동 재시도할 때 사용 */
 export function enqueueFileIndex(
   data: ExcelData,
   onUpdate: (id: string, patch: Partial<ExcelData>) => void
