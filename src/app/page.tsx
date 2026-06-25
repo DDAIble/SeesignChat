@@ -47,7 +47,7 @@ export default function Home() {
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Image
-              src="/LOGO.svg"
+              src="/aible_logo.svg"
               alt="SEE:SIGN"
               width={154}
               height={38}
@@ -55,7 +55,7 @@ export default function Home() {
               className="h-9 w-auto"
             />
             <div>
-              <h1 className="text-lg font-bold text-slate-900 leading-tight">SEE:SIGN CHAT</h1>
+              <h1 className="text-lg font-bold text-slate-900 leading-tight">AiBLE CHAT</h1>
               <p className="text-xs text-slate-500">데이터와 대화하세요.</p>
             </div>
           </div>
