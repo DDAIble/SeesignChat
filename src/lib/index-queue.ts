@@ -2,7 +2,46 @@ import type { ExcelData } from "@/lib/types";
 import { progressFromServerEvent } from "@/lib/learning-progress";
 import { readJsonResponse } from "@/lib/fetch-json";
 
-const MAX_CONCURRENT_FILE_INDEX = 2;
+const MAX_CONCURRENT_FILE_INDEX = 1;
+const EMBED_BODY_LIMIT_BYTES = 4_000_000;
+const EMBED_RETRY_MAX = 4;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildEmbedRequestBody(data: ExcelData): string {
+  const withData = JSON.stringify({ fileId: data.id, data });
+  if (withData.length < EMBED_BODY_LIMIT_BYTES) {
+    return withData;
+  }
+  return JSON.stringify({ fileId: data.id });
+}
+
+async function requestEmbed(data: ExcelData): Promise<Response> {
+  const body = buildEmbedRequestBody(data);
+
+  for (let attempt = 0; attempt <= EMBED_RETRY_MAX; attempt++) {
+    const embedRes = await fetch("/api/embed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+
+    if (embedRes.ok || embedRes.status === 413) {
+      return embedRes;
+    }
+
+    if (embedRes.status === 404 && attempt < EMBED_RETRY_MAX) {
+      await sleep(600 * (attempt + 1));
+      continue;
+    }
+
+    return embedRes;
+  }
+
+  throw new Error("파일 학습에 실패했습니다.");
+}
 
 type IndexJob = {
   data: ExcelData;
@@ -74,11 +113,7 @@ async function runIndexJob(job: IndexJob): Promise<void> {
   });
 
   try {
-    const embedRes = await fetch("/api/embed", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fileId: data.id }),
-    });
+    const embedRes = await requestEmbed(data);
 
     const contentType = embedRes.headers.get("content-type") ?? "";
 

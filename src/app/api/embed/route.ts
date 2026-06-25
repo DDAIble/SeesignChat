@@ -8,7 +8,9 @@ export const maxDuration = 300;
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as { data?: ExcelData; fileId?: string };
-    const data = body.fileId ? await resolveUploadData(body.fileId) : body.data;
+    const data = body.fileId
+      ? (await resolveUploadData(body.fileId)) ?? body.data
+      : body.data;
 
     if (!data?.id) {
       const message = body.fileId
