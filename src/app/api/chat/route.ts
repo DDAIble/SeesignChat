@@ -192,26 +192,51 @@ ${dataScopeRule}
 - **일목요연함**: 서론 2~3문장 → ### 섹션 → 불릿 목록. 줄글 장문 금지
 
 ## 시각화 (그래프·차트)
-- 사용자가 그래프·차트·추이·비교 시각화를 요청하면 **반드시** 아래 \`\`\`chart JSON 코드블록**만** 사용하세요.
-- Mermaid·xychart-beta·텍스트로 그리기·코드만 나열하지 마세요. 앱이 실제 그래프로 렌더링합니다.
-- \`\`\`chart 블록은 답변에서 **유일하게 허용되는 코드블록**입니다. 그 외 코드펜스 금지.
-- chart JSON 예시:
-\`\`\`chart
-{
-  "type": "bar-line",
-  "title": "2025년 국어 Q&A 추이 (대성 vs 메가)",
-  "xAxis": ["1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"],
-  "yAxisLabel": "Q&A 수",
-  "series": [
-    { "name": "대성마이맥", "type": "bar", "data": [31887, 37762, 37908] },
-    { "name": "메가스터디", "type": "line", "data": [45270, 48395, 38498] }
-  ]
-}
-\`\`\`
-- type: bar | line | bar-line | area | pie
-- xAxis 길이와 각 series.data 길이는 **반드시 동일**
-- 막대+선 혼합은 type을 bar-line으로, series마다 type 지정
-- 차트 아래에 1~2문장으로 해석을 덧붙이세요
+- 그래프·차트·시각화 요청 시 **반드시** \`\`\`chart JSON 코드블록만** 사용하세요.
+- Mermaid·xychart-beta·텍스트 그리기 금지. \`\`\`chart 블록은 답변에서 **유일하게 허용되는 코드블록**입니다.
+- 차트 아래 1~2문장 해석을 덧붙이세요.
+
+### 지원 type 목록
+| type | 용도 |
+| bar | 기본 막대 |
+| line | 선 그래프·추이 |
+| bar-line | 막대+선 혼합 (series에 type 지정) |
+| area | 영역 차트 |
+| pie / donut | 비율·구성 |
+| bump | **순위 변동** (series.data = 순위 숫자, 1이 1위) |
+| scatter | 산점도 |
+| positioning | **포지셔닝 맵** (2축 브랜드·강사 배치, 4분면 점선) |
+| stacked-bar | **누적 막대** |
+| grouped-bar | 그룹 막대 (나란히 비교) |
+| horizontal-bar | 가로 막대 (긴 라벨) |
+| heatmap | **히트맵** (요일×시간, 페이지×문항 밀도) |
+| radar | **레이더** (다차원 역량·지표 비교) |
+| funnel | **퍼널** (단계별 전환·건수) |
+| waterfall | **폭포수** (증감 누적) |
+
+### 공통 (bar·line·bump·stacked-bar 등)
+{ "type": "bar", "title": "...", "xAxis": ["1월","2월"], "yAxisLabel": "건수", "series": [{ "name": "A", "data": [10,20] }] }
+
+### bump (순위 — 작을수록 상위)
+{ "type": "bump", "title": "월별 순위", "xAxis": ["1월","2월","3월"], "series": [{ "name": "대성", "data": [1,2,1] }, { "name": "메가", "data": [2,1,2] }] }
+
+### positioning (포지셔닝 맵)
+{ "type": "positioning", "title": "...", "xAxisLabel": "가격 인식", "yAxisLabel": "품질 인식", "points": [{ "name": "대성", "x": 7.2, "y": 8.1 }, { "name": "메가", "x": 8.5, "y": 7.8 }] }
+
+### heatmap
+{ "type": "heatmap", "title": "...", "xLabels": ["월","화","수"], "yLabels": ["09시","10시","11시"], "values": [[12,5,3],[8,9,4],[2,6,11]] }
+
+### radar
+{ "type": "radar", "title": "...", "dimensions": ["국어","수학","영어","과학"], "series": [{ "name": "대성", "data": [8,7,9,6] }, { "name": "메가", "data": [7,8,8,7] }] }
+
+### funnel
+{ "type": "funnel", "title": "...", "stages": [{ "name": "방문", "value": 10000 }, { "name": "문의", "value": 3200 }, { "name": "전환", "value": 850 }] }
+
+### waterfall
+{ "type": "waterfall", "title": "...", "categories": ["시작","1월","2월","3월"], "values": [100000, 12000, -8000, 15000] }
+
+- xAxis·series.data·dimensions·values 배열 길이는 **반드시 일치**
+- 질문 의도에 맞는 type을 선택 (순위 변동→bump, 2축 배치→positioning, 밀도→heatmap)
 
 데이터 개요·커뮤니티 설명 답변 예시:
 ## 데이터 개요
