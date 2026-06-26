@@ -3,6 +3,7 @@ import {
   buildCommunityDatasetOverview,
   sheetLooksLikeCommunityPosts,
 } from "./community-analysis";
+import { sheetLooksLikeQuantitative } from "./quantitative-analysis";
 import {
   buildQAInsightsReport,
   buildQASchemaGuide,
@@ -25,6 +26,8 @@ export interface AIContextMeta {
   truncated: boolean;
   communityRows: number;
   ragChunks: number;
+  quantitativeMode: boolean;
+  quantitativeRows: number;
 }
 
 export interface AIContextResult {
@@ -147,6 +150,11 @@ function buildSingleFileContext(
 
     const isCommunity = sheetLooksLikeCommunityPosts(sheet.headers);
     const isQA = !isCommunity && sheetLooksLikeQA(sheet.headers, sheet.rows);
+    const isQuantitative = !isCommunity && !isQA && sheetLooksLikeQuantitative(
+      sheet.headers,
+      sheet.rows,
+      data.fileName
+    );
     const mode: RowContextMode = isQA ? "qa" : "raw";
     const maxBodyChars = getMaxBodyChars();
     const prefixParts: string[] = [];
@@ -160,6 +168,15 @@ function buildSingleFileContext(
       prefixParts.push(report);
       prefixParts.push("");
       parts.push(...prefixParts);
+      parts.push("");
+      continue;
+    }
+
+    if (isQuantitative) {
+      parts.push(
+        "- 데이터 유형: **정량·통계** — 매출·건수·추이 질문은 **전수 통계 리포트** 섹션을 사용하세요.",
+        `- 전체 ${sheet.rowCount.toLocaleString()}행 (상세 표는 전수 통계 리포트에 포함)`
+      );
       parts.push("");
       continue;
     }
@@ -232,6 +249,8 @@ export function buildAIContext(
     truncated: false,
     communityRows: 0,
     ragChunks: 0,
+    quantitativeMode: false,
+    quantitativeRows: 0,
   };
   const budget = { remaining: getMaxContextChars() };
 
@@ -293,6 +312,18 @@ export function buildAIContext(
   }
 
   return { text: parts.join("\n"), meta };
+}
+
+export function appendQuantitativeContext(
+  baseContext: string,
+  quantText: string,
+  meta: AIContextMeta,
+  rowCount: number
+): string {
+  meta.quantitativeMode = rowCount > 0;
+  meta.quantitativeRows = rowCount;
+  if (!quantText.trim()) return baseContext;
+  return `${baseContext}\n\n${quantText}`;
 }
 
 export function appendRAGContext(

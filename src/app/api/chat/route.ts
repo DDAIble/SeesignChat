@@ -8,8 +8,12 @@ import {
   UIMessage,
 } from "ai";
 import { createAnalysisTraceEmitter } from "@/lib/analysis-trace";
-import { appendRAGContext, buildAIContext } from "@/lib/excel";
+import { appendQuantitativeContext, appendRAGContext, buildAIContext } from "@/lib/excel";
 import { generateFollowUpQuestions } from "@/lib/follow-up-questions";
+import {
+  buildQuantitativeReport,
+  isQuantitativeAnalysisQuery,
+} from "@/lib/quantitative-analysis";
 import { searchRelevantChunks } from "@/lib/rag";
 import { sheetLooksLikeCommunityPosts } from "@/lib/community-analysis";
 import { sheetLooksLikeQA } from "@/lib/qa-location";
@@ -63,13 +67,27 @@ function summarizeUploads(excelFiles: ExcelData[]) {
 function buildSystemPrompt(
   excelFiles: ExcelData[],
   dataContext: string,
-  contextMeta: ReturnType<typeof buildAIContext>["meta"]
+  contextMeta: ReturnType<typeof buildAIContext>["meta"],
+  options: { quantitativeQuery: boolean }
 ): string {
-  const dataScopeRule = contextMeta.ragChunks > 0
-    ? `- 질문과 관련된 **${contextMeta.ragChunks}건**의 행을 RAG(임베딩 검색)로 찾았습니다. **'질문 관련 검색 결과 (RAG)'** 섹션을 우선 근거로 하세요.`
+  const dataScopeRule = contextMeta.quantitativeMode
+    ? `- **전수 통계 리포트**에 **${contextMeta.quantitativeRows.toLocaleString()}행** 정량 데이터가 포함되었습니다. 매출·통계·추이·비율 답변은 **이 리포트의 수치·표만** 사용하세요. RAG 청크·게시글 본문으로 수치를 만들지 마세요.`
+    : contextMeta.ragChunks > 0
+    ? `- 질문과 관련된 **${contextMeta.ragChunks}건**의 행을 RAG(임베딩 검색)로 찾았습니다. **정성·본문 분석**에만 사용하세요.`
     : contextMeta.truncated
       ? `- 상세 행 JSON은 토큰 한도로 **${contextMeta.includedRows.toLocaleString()}행**만 포함되었습니다. Q&A는 **인사이트 리포트(전체 ${contextMeta.scannedRows.toLocaleString()}행 기준)**를 우선 활용하세요.`
       : `- 업로드된 **전체 ${contextMeta.scannedRows.toLocaleString()}행**을 서버에서 읽었습니다.`;
+
+  const quantitativeRules = options.quantitativeQuery || contextMeta.quantitativeMode
+    ? `
+## 정량·매출·통계 질문 — 최우선 규칙
+- 사용자가 통계·매출·수익·추이·트렌드·건수·비율·실적을 물었습니다.
+- **전수 통계 리포트**와 Q&A **인사이트 리포트 순위표**의 숫자만 근거로 하세요.
+- **절대 금지**: 마케팅 페르소나, Macro-Avatar, Desire, Limiting Belief, 정성적 여론 프레임으로 매출·통계 질문에 답하기
+- **절대 금지**: RAG로 가져온 게시글 본문 일부만 보고 전체 매출·통계를 추정하기
+- 답변 형식: ## 제목 → GFM **표** → 수치 해석 불릿 → (요청 시) \`\`\`chart JSON
+`
+    : "";
 
   return `당신은 SEE:SIGN CHAT의 데이터 분석 AI 어시스턴트입니다.
 
@@ -81,8 +99,9 @@ function buildSystemPrompt(
 컬럼명·내용·파일명을 보고 데이터 유형을 스스로 파악한 뒤, 질문 의도에 맞는 방식으로 분석하고 답변하세요.
 
 ## 정량 데이터가 주를 이룰 때
-- 합계, 평균, 중앙값, 최대/최소, 비율, 추이, 순위 등을 데이터 기반으로 계산하세요.
-- 수치 비교·집계가 필요하면 표나 목록으로 정리하세요.
+- 합계, 평균, 중앙값, 최대/최소, 비율, 추이, 순위 등을 **전수 통계 리포트·집계 표**의 숫자로 계산하세요.
+- 수치 비교·집계가 필요하면 표나 chart JSON으로 정리하세요.
+${quantitativeRules}
 
 ## 정성 데이터 — 커뮤니티 게시글·텍스트
 - **'질문 관련 검색 결과 (RAG)'** 섹션이 있으면, 질문과 의미적으로 가까운 행입니다. 이를 1순위 근거로 사용하세요.
@@ -361,6 +380,32 @@ export async function POST(request: Request) {
 
         const { text: baseContext, meta: contextMeta } = buildAIContext(excelFilesResolved, userTexts);
 
+        const userQuery = getLatestUserQuery(messages);
+        const quantitativeQuery = isQuantitativeAnalysisQuery(userQuery);
+        let dataContext = baseContext;
+
+        const quantReport = buildQuantitativeReport(excelFilesResolved);
+        if (quantReport.sheetCount > 0) {
+          trace.upsertStep({
+            id: "quant-report",
+            label: "정량 데이터 전수 집계",
+            status: "running",
+            detail: "통계·매출 시트 전체 행 집계",
+          });
+
+          dataContext = appendQuantitativeContext(
+            dataContext,
+            quantReport.text,
+            contextMeta,
+            quantReport.rowCount
+          );
+
+          trace.patchStep("quant-report", {
+            status: "done",
+            detail: `${quantReport.sheetCount}개 시트 · ${quantReport.rowCount.toLocaleString()}행 전수 집계`,
+          });
+        }
+
         if (uploads.communityRows > 0) {
           trace.patchStep("community-stats", { status: "done" });
         }
@@ -369,38 +414,48 @@ export async function POST(request: Request) {
         }
         trace.patchStep("context", { status: "done" });
 
-        let dataContext = baseContext;
-        const userQuery = getLatestUserQuery(messages);
         const ragFileIds = excelFilesResolved.map((file) => file.id);
+        const needRAG = !quantitativeQuery && uploads.communityRows > 0;
 
-        trace.upsertStep({
-          id: "rag",
-          label: "관련 데이터 검색 (RAG)",
-          status: "running",
-          detail: "질문을 임베딩해 관련 행을 찾는 중…",
-        });
-        trace.setHeadline("질문과 관련된 데이터를 검색하고 있습니다…");
+        if (needRAG) {
+          trace.upsertStep({
+            id: "rag",
+            label: "관련 데이터 검색 (RAG)",
+            status: "running",
+            detail: "질문을 임베딩해 관련 행을 찾는 중…",
+          });
+          trace.setHeadline("질문과 관련된 데이터를 검색하고 있습니다…");
 
-        await ensureFilesIndexed(excelFilesResolved);
+          await ensureFilesIndexed(excelFilesResolved);
 
-        const rag = await searchRelevantChunks(ragFileIds, userQuery);
-        dataContext = appendRAGContext(baseContext, rag.contextText, contextMeta, rag.chunks.length);
+          const rag = await searchRelevantChunks(ragFileIds, userQuery);
+          dataContext = appendRAGContext(dataContext, rag.contextText, contextMeta, rag.chunks.length);
 
-        if (rag.citations.length > 0) {
-          writer.write({
-            type: "data-citations",
-            id: "citations",
-            data: { sources: rag.citations },
-          } as Parameters<typeof writer.write>[0]);
+          if (rag.citations.length > 0) {
+            writer.write({
+              type: "data-citations",
+              id: "citations",
+              data: { sources: rag.citations },
+            } as Parameters<typeof writer.write>[0]);
+          }
+
+          trace.patchStep("rag", {
+            status: "done",
+            detail:
+              rag.chunks.length > 0
+                ? `${rag.chunks.length}건 관련 행 검색 완료`
+                : "인덱스된 데이터 없음 — 업로드 후 인덱싱을 확인하세요",
+          });
+        } else {
+          trace.upsertStep({
+            id: "rag",
+            label: "관련 데이터 검색 (RAG)",
+            status: "done",
+            detail: quantitativeQuery
+              ? "통계·매출 질문 — RAG 생략 (전수 집계 사용)"
+              : "텍스트 검색 대상 없음",
+          });
         }
-
-        trace.patchStep("rag", {
-          status: "done",
-          detail:
-            rag.chunks.length > 0
-              ? `${rag.chunks.length}건 관련 행 검색 완료`
-              : "인덱스된 데이터 없음 — 업로드 후 인덱싱을 확인하세요",
-        });
 
         trace.upsertStep({
           id: "answer",
@@ -410,7 +465,9 @@ export async function POST(request: Request) {
         });
         trace.setHeadline("분석 결과를 바탕으로 답변을 작성하고 있습니다…");
 
-        const systemPrompt = buildSystemPrompt(excelFilesResolved, dataContext, contextMeta);
+        const systemPrompt = buildSystemPrompt(excelFilesResolved, dataContext, contextMeta, {
+          quantitativeQuery,
+        });
         const result = streamText({
           model,
           system: systemPrompt,
@@ -421,22 +478,27 @@ export async function POST(request: Request) {
         const answerText = await result.text;
         trace.patchStep("answer", { status: "done" });
 
-        try {
-          const questions = await generateFollowUpQuestions(
-            model,
-            userQuery,
-            answerText,
-            uploads.fileNames
-          );
-          if (questions.length > 0) {
-            writer.write({
-              type: "data-follow-up-questions",
-              id: "follow-up-questions",
-              data: { questions },
-            } as Parameters<typeof writer.write>[0]);
+        const skipFollowUp =
+          process.env.CHAT_SKIP_FOLLOW_UP === "true" || quantitativeQuery;
+
+        if (!skipFollowUp) {
+          try {
+            const questions = await generateFollowUpQuestions(
+              model,
+              userQuery,
+              answerText,
+              uploads.fileNames
+            );
+            if (questions.length > 0) {
+              writer.write({
+                type: "data-follow-up-questions",
+                id: "follow-up-questions",
+                data: { questions },
+              } as Parameters<typeof writer.write>[0]);
+            }
+          } catch (followUpError) {
+            console.error("Follow-up question generation failed:", followUpError);
           }
-        } catch (followUpError) {
-          console.error("Follow-up question generation failed:", followUpError);
         }
       },
     });
