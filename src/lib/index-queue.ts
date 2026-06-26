@@ -1,3 +1,4 @@
+﻿import { withBasePath } from "@/lib/base-path";
 import type { ExcelData } from "@/lib/types";
 import { progressFromServerEvent } from "@/lib/learning-progress";
 import { readJsonResponse } from "@/lib/fetch-json";
@@ -23,7 +24,7 @@ async function requestEmbed(data: ExcelData): Promise<Response> {
   const body = buildEmbedRequestBody(data);
 
   for (let attempt = 0; attempt <= EMBED_RETRY_MAX; attempt++) {
-    const embedRes = await fetch("/api/embed", {
+    const embedRes = await fetch(withBasePath("/api/embed"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,

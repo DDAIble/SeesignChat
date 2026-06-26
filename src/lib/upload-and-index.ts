@@ -1,3 +1,4 @@
+﻿import { withBasePath } from "@/lib/base-path";
 import { consumeNdjsonStream } from "@/lib/ndjson-stream";
 import { progressFromServerEvent } from "@/lib/learning-progress";
 import { readJsonResponse } from "@/lib/fetch-json";
@@ -11,7 +12,7 @@ export async function uploadAndIndexFile(
   const formData = new FormData();
   formData.append("file", file);
 
-  const res = await fetch("/api/upload", {
+  const res = await fetch(withBasePath("/api/upload"), {
     method: "POST",
     body: formData,
   });

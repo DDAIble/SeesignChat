@@ -7,6 +7,7 @@ import { ArrowLeft } from "lucide-react";
 import ExcelUploader from "@/components/ExcelUploader";
 import DataPreview from "@/components/DataPreview";
 import ChatInterface from "@/components/ChatInterface";
+import { withBasePath } from "@/lib/base-path";
 import type { ExcelData } from "@/lib/types";
 
 export default function Home() {
@@ -23,7 +24,9 @@ export default function Home() {
   const handleRemove = async (id: string) => {
     setExcelFiles((prev) => prev.filter((f) => f.id !== id));
     try {
-      await fetch(`/api/embed?fileId=${encodeURIComponent(id)}`, { method: "DELETE" });
+      await fetch(withBasePath(`/api/embed?fileId=${encodeURIComponent(id)}`), {
+        method: "DELETE",
+      });
     } catch {
       // UI에서는 이미 제거됨 — 인덱스 정리 실패는 무시
     }
@@ -34,12 +37,14 @@ export default function Home() {
     setExcelFiles([]);
     await Promise.all(
       ids.map((id) =>
-        fetch(`/api/embed?fileId=${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => undefined)
+        fetch(withBasePath(`/api/embed?fileId=${encodeURIComponent(id)}`), {
+          method: "DELETE",
+        }).catch(() => undefined)
       )
     );
   };
 
-  const aibleBoxUrl = process.env.NEXT_PUBLIC_AIBLE_BOX_URL ?? "https://ddaible.github.io/AibleBox/";
+  const aibleBoxUrl = process.env.NEXT_PUBLIC_AIBLE_BOX_URL ?? "/";
 
   return (
     <div className="flex h-screen flex-col bg-slate-50">

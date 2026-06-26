@@ -14,6 +14,7 @@ import { isCitationData, type CitationSource } from "@/lib/citations";
 import FollowUpQuestions from "@/components/FollowUpQuestions";
 import AnswerExportActions from "@/components/AnswerExportActions";
 import { isFollowUpQuestionsData } from "@/lib/follow-up-questions";
+import { withBasePath } from "@/lib/base-path";
 import type { ExcelData } from "@/lib/types";
 
 interface ChatInterfaceProps {
@@ -39,7 +40,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
-        api: "/api/chat",
+        api: withBasePath("/api/chat"),
       }),
     []
   );
