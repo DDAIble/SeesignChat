@@ -5,7 +5,7 @@ import { Upload, FileSpreadsheet, Loader2, X, Plus } from "lucide-react";
 import { uploadAndIndexFile } from "@/lib/upload-and-index";
 import type { ExcelData } from "@/lib/types";
 
-const MAX_FILES = 10;
+const MAX_FILES = 5;
 const VALID_EXTENSIONS = [".xlsx", ".xls", ".csv"];
 
 interface ExcelUploaderProps {
