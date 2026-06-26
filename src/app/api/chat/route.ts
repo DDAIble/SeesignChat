@@ -1,4 +1,4 @@
-﻿import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { APICallError } from "ai";
 import {
   convertToModelMessages,
@@ -237,12 +237,12 @@ export async function POST(request: Request) {
     const google = createGoogleGenerativeAI({ apiKey });
     const model = google(modelId);
 
-    const { resolveExcelFiles } = await import("@/lib/upload-persistence");
+    const { resolveExcelFiles, isBlobPersistenceEnabled } = await import("@/lib/upload-persistence");
     const { ensureFilesIndexed } = await import("@/lib/rag");
     const resolvedFiles = await resolveExcelFiles(fileIds, excelFiles);
 
     if (!resolvedFiles || resolvedFiles.length === 0) {
-      const blobConfigured = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+      const blobConfigured = isBlobPersistenceEnabled();
       const error = fileIds && fileIds.length > 0
         ? blobConfigured
           ? "서버에서 파일 데이터를 찾을 수 없습니다. 파일을 다시 업로드해 주세요."

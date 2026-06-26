@@ -8,8 +8,9 @@ function blobPath(fileId: string): string {
   return `${BLOB_PREFIX}/${fileId}.json`;
 }
 
-function blobEnabled(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+/** Vercel Blob 사용 가능 여부 (read-write token 또는 OIDC + store id) */
+export function isBlobPersistenceEnabled(): boolean {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -17,7 +18,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function persistToBlob(data: ExcelData): Promise<void> {
-  if (!blobEnabled()) return;
+  if (!isBlobPersistenceEnabled()) return;
 
   await put(blobPath(data.id), JSON.stringify(data), {
     access: "public",
@@ -37,7 +38,7 @@ async function persistToBlob(data: ExcelData): Promise<void> {
 }
 
 async function loadFromBlob(fileId: string): Promise<ExcelData | undefined> {
-  if (!blobEnabled()) return undefined;
+  if (!isBlobPersistenceEnabled()) return undefined;
 
   try {
     const meta = await head(blobPath(fileId));
@@ -50,7 +51,7 @@ async function loadFromBlob(fileId: string): Promise<ExcelData | undefined> {
 }
 
 async function deleteFromBlob(fileId: string): Promise<void> {
-  if (!blobEnabled()) return;
+  if (!isBlobPersistenceEnabled()) return;
 
   try {
     const meta = await head(blobPath(fileId));
