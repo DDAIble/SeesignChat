@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import ExcelUploader from "@/components/ExcelUploader";
 import DataPreview from "@/components/DataPreview";
@@ -44,6 +43,7 @@ export default function Home() {
     );
   };
 
+  // basePath 밖 플랫폼 루트 — Next.js Link가 /chat을 붙이므로 <a> 사용
   const aibleBoxUrl = process.env.NEXT_PUBLIC_AIBLE_BOX_URL ?? "/";
 
   return (
@@ -64,13 +64,13 @@ export default function Home() {
               <p className="text-xs text-slate-500">데이터와 대화하세요.</p>
             </div>
           </div>
-          <Link
+          <a
             href={aibleBoxUrl}
             className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             AiBle BOX
-          </Link>
+          </a>
         </div>
       </header>
 
