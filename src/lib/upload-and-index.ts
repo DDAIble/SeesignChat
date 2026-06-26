@@ -1,4 +1,4 @@
-﻿import { withBasePath } from "@/lib/base-path";
+import { withBasePath } from "@/lib/base-path";
 import { consumeNdjsonStream } from "@/lib/ndjson-stream";
 import { progressFromServerEvent } from "@/lib/learning-progress";
 import { readJsonResponse } from "@/lib/fetch-json";
@@ -26,7 +26,11 @@ export async function uploadAndIndexFile(
     throw new Error(json.error || "업로드 실패");
   }
 
-  if (!contentType.includes("ndjson")) {
+  // 게이트웨이 프록시가 content-type을 바꿀 수 있어 JSON이 아니면 NDJSON으로 처리
+  const isNdjsonStream =
+    contentType.includes("ndjson") || !contentType.includes("application/json");
+
+  if (!isNdjsonStream) {
     const json = await readJsonResponse<{ data?: ExcelData; error?: string }>(res);
     const data = json.data;
     if (!data) {
@@ -40,6 +44,11 @@ export async function uploadAndIndexFile(
   let streamError: Error | null = null;
 
   await consumeNdjsonStream(res, (event) => {
+    if (event.type === "error") {
+      streamError = new Error(String(event.message ?? "파일 학습에 실패했습니다."));
+      return;
+    }
+
     if (event.type === "uploaded") {
       data = event.data as ExcelData;
       onAdd({
@@ -78,11 +87,13 @@ export async function uploadAndIndexFile(
 
     if (event.type === "error") {
       const message = String(event.message ?? "파일 학습에 실패했습니다.");
-      onUpdate(data.id, {
-        indexStatus: "error",
-        indexError: message,
-        indexProgress: undefined,
-      });
+      if (data) {
+        onUpdate(data.id, {
+          indexStatus: "error",
+          indexError: message,
+          indexProgress: undefined,
+        });
+      }
       streamError = new Error(message);
     }
   });

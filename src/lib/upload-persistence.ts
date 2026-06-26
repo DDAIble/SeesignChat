@@ -18,15 +18,12 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function persistToBlob(data: ExcelData): Promise<void> {
-  if (!isBlobPersistenceEnabled()) return;
-
   await put(blobPath(data.id), JSON.stringify(data), {
     access: "public",
     addRandomSuffix: false,
     contentType: "application/json",
   });
 
-  // Blob이 다른 인스턴스에서 바로 조회되도록 저장 직후 확인
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       await head(blobPath(data.id));
@@ -63,14 +60,20 @@ async function deleteFromBlob(fileId: string): Promise<void> {
 
 export async function persistUploadData(data: ExcelData): Promise<void> {
   storeUploadData(data);
-  await persistToBlob(data);
+
+  if (!isBlobPersistenceEnabled()) return;
+
+  try {
+    await persistToBlob(data);
+  } catch (error) {
+    console.error("Blob persist failed (in-memory upload kept):", error);
+  }
 }
 
 export async function resolveUploadData(fileId: string): Promise<ExcelData | undefined> {
   const cached = getUploadData(fileId);
   if (cached) return cached;
 
-  // 업로드 직후 다른 Vercel 인스턴스에서 Blob 조회가 잠깐 실패할 수 있어 재시도
   for (let attempt = 0; attempt < 5; attempt++) {
     const fromBlob = await loadFromBlob(fileId);
     if (fromBlob) {

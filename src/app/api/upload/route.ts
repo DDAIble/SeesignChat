@@ -1,4 +1,4 @@
-﻿import { NextRequest } from "next/server";
+import { NextRequest } from "next/server";
 import { parseExcelBuffer } from "@/lib/excel";
 import { indexExcelFile } from "@/lib/rag";
 import { persistUploadData } from "@/lib/upload-persistence";
