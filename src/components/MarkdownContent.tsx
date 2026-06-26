@@ -8,6 +8,8 @@ import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { Components } from "react-markdown";
+import DataChart from "@/components/DataChart";
+import MermaidChart from "@/components/MermaidChart";
 import { stripCitationMarkers } from "@/lib/citations";
 import { preprocessAssistantMarkdown } from "@/lib/markdown";
 import "katex/dist/katex.min.css";
@@ -21,6 +23,11 @@ const sanitizeSchema = {
     td: [...(defaultSchema.attributes?.td ?? []), "colSpan", "rowSpan", "align"],
   },
 };
+
+function getCodeLanguage(className?: string): string | null {
+  const match = /language-([\w-]+)/.exec(className ?? "");
+  return match?.[1] ?? null;
+}
 
 const components: Components = {
   h1: ({ children }) => (
@@ -60,7 +67,18 @@ const components: Components = {
     </blockquote>
   ),
   code: ({ className, children }) => {
-    const isBlock = className?.includes("language-");
+    const language = getCodeLanguage(className);
+    const code = String(children).replace(/\n$/, "");
+
+    if (language === "chart") {
+      return <DataChart specText={code} />;
+    }
+
+    if (language === "mermaid") {
+      return <MermaidChart code={code} />;
+    }
+
+    const isBlock = Boolean(language);
     if (isBlock) {
       return (
         <code className="block overflow-x-auto rounded-lg bg-slate-800 px-4 py-3 font-mono text-[13px] leading-6 text-slate-100">
@@ -68,15 +86,16 @@ const components: Components = {
         </code>
       );
     }
+
     return (
       <code className="rounded-md bg-slate-200/80 px-1.5 py-0.5 font-mono text-[13px] text-slate-800">
         {children}
       </code>
     );
   },
-  pre: ({ children }) => (
-    <pre className="mb-3 overflow-x-auto rounded-lg last:mb-0">{children}</pre>
-  ),
+  pre: ({ children }) => {
+    return <div className="mb-3 last:mb-0">{children}</div>;
+  },
   table: ({ children }) => (
     <div className="mb-4 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm last:mb-0">
       <table className="w-full min-w-max border-collapse text-sm">{children}</table>

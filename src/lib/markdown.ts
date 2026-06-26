@@ -76,6 +76,10 @@ function unwrapSingleCodeFence(text: string): string | null {
   let inner = match[2].trim();
   if (!inner) return "";
 
+  if (language === "chart" || language === "mermaid") {
+    return null;
+  }
+
   if (
     language === "json" ||
     language === "jsonc" ||
@@ -344,6 +348,52 @@ function cleanBrokenBold(text: string): string {
   return text.replace(/\*\*([^*\n]+?)\*\*/g, (_, inner) => `**${inner.trim()}**`);
 }
 
+function normalizeVisualizationBlocks(text: string): string {
+  if (/```chart[\s\S]*?```/.test(text)) return text;
+
+  const mermaidStarters =
+    /^(xychart-beta|pie(?:\s+title)?|quadrantChart|timeline|gitGraph|flowchart(?:\s+(?:TD|TB|BT|RL|LR))?|graph(?:\s+(?:TD|TB|BT|RL|LR))?|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|gantt|block-beta)\b/;
+
+  const lines = text.split("\n");
+  const result: string[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (mermaidStarters.test(trimmed) && !trimmed.startsWith("```")) {
+      const block: string[] = [line];
+      index += 1;
+
+      while (index < lines.length) {
+        const next = lines[index];
+        const nextTrimmed = next.trim();
+
+        if (!nextTrimmed) break;
+        if (/^#{1,6}\s/.test(nextTrimmed)) break;
+        if (/^[-*]\s/.test(nextTrimmed)) break;
+        if (/^\d+\.\s/.test(nextTrimmed)) break;
+        if (mermaidStarters.test(nextTrimmed)) break;
+        if (/^\*\*/.test(nextTrimmed) && !next.startsWith("    ") && !next.startsWith("\t")) break;
+
+        block.push(next);
+        index += 1;
+      }
+
+      result.push("```mermaid");
+      result.push(...block);
+      result.push("```");
+      continue;
+    }
+
+    result.push(line);
+    index += 1;
+  }
+
+  return result.join("\n");
+}
+
 function finalizeMarkdown(text: string): string {
   let result = tightenEmphasisMarkers(text);
   result = cleanBrokenBold(result);
@@ -375,6 +425,7 @@ export function preprocessAssistantMarkdown(content: string): string {
   text = ensureListSpacing(text);
   text = normalizeHorizontalRules(text);
   text = normalizeMarkdownTables(text);
+  text = normalizeVisualizationBlocks(text);
   text = finalizeMarkdown(text);
 
   return text;
