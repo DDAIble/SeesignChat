@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
@@ -151,7 +151,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
     turnFollowUpRef.current = null;
     sendMessage(
       { text },
-      { body: { fileIds: excelFiles.map((f) => f.id) } }
+      { body: { fileIds: excelFiles.map((f) => f.id), excelFiles } }
     );
     setInput("");
   };

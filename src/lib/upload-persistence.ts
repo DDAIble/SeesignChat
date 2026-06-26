@@ -1,8 +1,9 @@
-import { del, head, put } from "@vercel/blob";
+import { del, get, head, put } from "@vercel/blob";
 import type { ExcelData } from "./types";
 import { getUploadData, removeUploadData, storeUploadData } from "./upload-data-store";
 
 const BLOB_PREFIX = "excel-data";
+const BLOB_ACCESS = "private" as const;
 
 function blobPath(fileId: string): string {
   return `${BLOB_PREFIX}/${fileId}.json`;
@@ -19,7 +20,7 @@ function sleep(ms: number): Promise<void> {
 
 async function persistToBlob(data: ExcelData): Promise<void> {
   await put(blobPath(data.id), JSON.stringify(data), {
-    access: "public",
+    access: BLOB_ACCESS,
     addRandomSuffix: false,
     contentType: "application/json",
   });
@@ -38,10 +39,10 @@ async function loadFromBlob(fileId: string): Promise<ExcelData | undefined> {
   if (!isBlobPersistenceEnabled()) return undefined;
 
   try {
-    const meta = await head(blobPath(fileId));
-    const res = await fetch(meta.url, { cache: "no-store" });
-    if (!res.ok) return undefined;
-    return (await res.json()) as ExcelData;
+    const result = await get(blobPath(fileId), { access: BLOB_ACCESS });
+    if (!result || result.statusCode !== 200 || !result.stream) return undefined;
+    const text = await new Response(result.stream).text();
+    return JSON.parse(text) as ExcelData;
   } catch {
     return undefined;
   }
@@ -51,8 +52,7 @@ async function deleteFromBlob(fileId: string): Promise<void> {
   if (!isBlobPersistenceEnabled()) return;
 
   try {
-    const meta = await head(blobPath(fileId));
-    await del(meta.url);
+    await del(blobPath(fileId));
   } catch {
     // missing blob is fine
   }
