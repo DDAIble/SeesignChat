@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ArrowRight, Database } from "lucide-react";
 import ExcelUploader from "@/components/ExcelUploader";
 import DataPreview from "@/components/DataPreview";
 import ChatInterface from "@/components/ChatInterface";
@@ -45,6 +45,8 @@ export default function Home() {
 
   // basePath 밖 플랫폼 루트 — Next.js Link가 /chat을 붙이므로 <a> 사용
   const aibleBoxUrl = process.env.NEXT_PUBLIC_AIBLE_BOX_URL ?? "/";
+  const seesignAdminUrl =
+    process.env.NEXT_PUBLIC_SEESIGN_ADMIN_URL ?? "https://seesign-admin.digitalds.store/main";
 
   return (
     <div className="flex h-screen flex-col bg-slate-50">
@@ -87,6 +89,20 @@ export default function Home() {
               onRemove={handleRemove}
               onClearAll={handleClearAll}
             />
+
+            <a
+              href={seesignAdminUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 via-fuchsia-600 to-violet-700 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-violet-500/30 transition-all hover:from-violet-500 hover:via-fuchsia-500 hover:to-violet-600 hover:shadow-violet-500/45 active:scale-[0.98]"
+            >
+              <Database className="h-4 w-4 shrink-0" />
+              <span>SEE:SIGN에서 데이터 수집하러 가기</span>
+              <ArrowRight className="h-4 w-4 shrink-0" />
+            </a>
+            <p className="mt-1.5 text-center text-[11px] text-slate-400">
+              매출·커뮤니티·Q&A 등 분석할 데이터를 먼저 모아보세요
+            </p>
           </div>
 
           {excelFiles.length > 0 && (
