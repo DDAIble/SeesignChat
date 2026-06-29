@@ -15,6 +15,8 @@ import CitationDetailModal from "@/components/CitationDetailModal";
 import {
   citationsByIndex,
   filterBodyContentCitations,
+  formatEvidenceLinkLabel,
+  getCitationByIndex,
   preprocessEvidenceLinks,
   stripCitationMarkers,
   type CitationSource,
@@ -24,6 +26,10 @@ import "katex/dist/katex.min.css";
 
 const sanitizeSchema = {
   ...defaultSchema,
+  protocols: {
+    ...(defaultSchema.protocols ?? {}),
+    href: [...(defaultSchema.protocols?.href ?? []), "cite"],
+  },
   tagNames: [...(defaultSchema.tagNames ?? []), "table", "thead", "tbody", "tr", "th", "td", "br"],
   attributes: {
     ...defaultSchema.attributes,
@@ -161,22 +167,36 @@ export default function MarkdownContent({ content, citations = [] }: MarkdownCon
       a: ({ href, children }) => {
         if (href?.startsWith("cite:")) {
           const index = Number(href.slice(5));
-          const source = citationMap.get(index);
+          const source = citationMap.get(index) ?? getCitationByIndex(bodyCitations, index);
+          const label = source
+            ? formatEvidenceLinkLabel(source)
+            : typeof children === "string"
+              ? children
+              : `출처 ${index}`;
+
           if (!source) {
             return (
-              <span className="text-xs text-slate-400" title="본문 출처 없음">
-                [근거]
+              <span
+                className="mx-0.5 inline text-xs text-slate-500 underline decoration-dotted"
+                title="출처 데이터 로딩 중이거나 매칭되지 않았습니다"
+              >
+                {label}
               </span>
             );
           }
+
           return (
             <button
               type="button"
-              onClick={() => setSelectedCitation(source)}
-              className="mx-0.5 inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-xs font-medium text-emerald-800 hover:border-emerald-300 hover:bg-emerald-100"
-              title={`${source.fileName} · ${source.sheetName} · 행 ${source.rowIndex}`}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setSelectedCitation(source);
+              }}
+              className="mx-0.5 inline-flex max-w-full items-center rounded-md border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-xs font-medium text-emerald-800 underline decoration-emerald-400 underline-offset-2 hover:border-emerald-400 hover:bg-emerald-100 cursor-pointer"
+              title={`${source.fileName} · ${source.sheetName} · 행 ${source.rowIndex}${source.rowEnd > source.rowIndex ? `~${source.rowEnd}` : ""} — 클릭하면 본문 보기`}
             >
-              {children ?? "근거"}
+              {label}
             </button>
           );
         }
@@ -193,7 +213,7 @@ export default function MarkdownContent({ content, citations = [] }: MarkdownCon
         );
       },
     };
-  }, [citationMap]);
+  }, [citationMap, bodyCitations]);
 
   return (
     <>

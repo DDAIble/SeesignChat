@@ -32,6 +32,42 @@ export function citationsByIndex(sources: CitationSource[] | null | undefined): 
   return new Map(list.map((source) => [source.index, source]));
 }
 
+/** 클릭 링크에 표시할 출처 라벨 (파일명 · 행) */
+export function formatEvidenceLinkLabel(source: CitationSource): string {
+  const baseName = source.fileName.replace(/\.(xlsx|xls|csv)$/i, "").trim();
+  const fileLabel = baseName.length > 22 ? `${baseName.slice(0, 19)}…` : baseName;
+  const rowLabel =
+    source.rowEnd > source.rowIndex
+      ? `${source.rowIndex}~${source.rowEnd}행`
+      : `${source.rowIndex}행`;
+  return `${fileLabel} · ${rowLabel}`;
+}
+
+export function getCitationByIndex(
+  citations: CitationSource[],
+  index: number
+): CitationSource | undefined {
+  return citations.find((source) => source.index === index);
+}
+
+/** 답변에서 [근거 N] / cite:N 인용 번호 추출 */
+export function extractEvidenceIndices(content: string): Set<number> {
+  const indices = new Set<number>();
+  for (const match of content.matchAll(/\[근거\s*(\d{1,3})\]/gi)) {
+    const index = Number(match[1]);
+    if (Number.isFinite(index) && index > 0) indices.add(index);
+  }
+  for (const match of content.matchAll(/\(cite:(\d{1,3})\)/gi)) {
+    const index = Number(match[1]);
+    if (Number.isFinite(index) && index > 0) indices.add(index);
+  }
+  for (const match of content.matchAll(/\[([^\]]+)\]\(cite:(\d{1,3})\)/gi)) {
+    const index = Number(match[2]);
+    if (Number.isFinite(index) && index > 0) indices.add(index);
+  }
+  return indices;
+}
+
 /** 본문(게시글 텍스트)이 있는 출처만 — 통계·집계 전용 인용 제외 */
 export function isBodyContentCitation(source: CitationSource): boolean {
   if ((source.body?.trim() ?? "").length >= 10) return true;
@@ -98,7 +134,7 @@ export function findCitationIndexForRef(
 }
 
 /**
- * `[근거 N]` 및 레거시 `(근거: 파일/시트/행)` → 클릭 가능한 `[근거 N](cite:N)` 링크로 변환
+ * `[근거 N]` 및 레거시 `(근거: 파일/시트/행)` → 클릭 가능한 `[파일 · N행](cite:N)` 링크로 변환
  */
 export function preprocessEvidenceLinks(
   content: string,
@@ -107,7 +143,13 @@ export function preprocessEvidenceLinks(
   const bodyCitations = filterBodyContentCitations(citations);
   let result = content;
 
-  result = result.replace(/\[근거\s+(\d{1,3})\]/g, "[근거 $1](cite:$1)");
+  const toLink = (index: number): string => {
+    const source = getCitationByIndex(bodyCitations, index);
+    const label = source ? formatEvidenceLinkLabel(source) : `출처 ${index}`;
+    return `[${label}](cite:${index})`;
+  };
+
+  result = result.replace(/\[근거\s*(\d{1,3})\]/gi, (_, n) => toLink(Number(n)));
 
   result = result.replace(/\(근거\s*:\s*([^)]+)\)/g, (_match, inner: string) => {
     const parts = inner.split(/\s*,\s*/).map((p) => p.trim()).filter(Boolean);
@@ -116,7 +158,7 @@ export function preprocessEvidenceLinks(
       const ref = parseEvidenceRef(part);
       if (!ref) continue;
       const index = findCitationIndexForRef(bodyCitations, ref);
-      if (index !== null) links.push(`[근거 ${index}](cite:${index})`);
+      if (index !== null) links.push(toLink(index));
     }
     return links.length > 0 ? links.join(" ") : "";
   });
@@ -138,6 +180,10 @@ export function filterCitationsUsedInText(
   content: string,
   sources: CitationSource[] | null | undefined
 ): CitationSource[] {
+  const evidenceIndices = extractEvidenceIndices(content);
+  if (evidenceIndices.size > 0) {
+    return (sources ?? []).filter((source) => evidenceIndices.has(source.index));
+  }
   const indices = extractCitationIndices(content);
   if (indices.size === 0) return [];
   return (sources ?? []).filter((source) => indices.has(source.index));
@@ -154,11 +200,11 @@ export function resolveDisplayedCitations(
   return used.length > 0 ? used : list;
 }
 
-/** 답변 본문에서 [N] 인용 표기를 제거합니다 (화면 표시용). */
+/** 답변 본문에서 [N] 인용 표기를 제거합니다 (화면 표시용). [근거 N]은 유지합니다. */
 export function stripCitationMarkers(content: string): string {
   return content
     .replace(/^\s*인용\s*:\s*(\[\d{1,3}\](?:\s*,\s*\[\d{1,3}\])*)\s*$/gm, "")
-    .replace(/\s*\[(\d{1,3})\]/g, "")
+    .replace(/\s*\[(\d{1,3})\](?!\()/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

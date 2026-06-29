@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import CitationDetailModal from "@/components/CitationDetailModal";
 import {
   filterBodyContentCitations,
+  formatEvidenceLinkLabel,
   resolveDisplayedCitations,
   type CitationSource,
 } from "@/lib/citations";
@@ -67,7 +68,10 @@ export default function CitationListPanel({ content, citations }: CitationListPa
                   onClick={() => setSelected(source)}
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left hover:border-emerald-300 hover:bg-emerald-50/50"
                 >
-                  <p className="text-sm font-medium text-slate-900 line-clamp-2">
+                  <p className="text-sm font-medium text-emerald-800">
+                    {formatEvidenceLinkLabel(source)}
+                  </p>
+                  <p className="mt-0.5 text-xs font-medium text-slate-900 line-clamp-2">
                     {source.title || "(제목 없음)"}
                   </p>
                   {preview && (
