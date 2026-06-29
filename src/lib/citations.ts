@@ -4,6 +4,8 @@ export interface CitationRowData {
   body: string;
   date: string;
   community: string;
+  /** 원본 엑셀 컬럼명 -> 셀 값 (모달에서 원본 컬럼 그대로 표시) */
+  cells?: Record<string, string>;
 }
 
 export interface CitationSource {
@@ -15,6 +17,8 @@ export interface CitationSource {
   title: string;
   body: string;
   rows: CitationRowData[];
+  /** 원본 엑셀 헤더(컬럼 순서). 통계/원본컬럼 모달 표시에 사용 */
+  headers?: string[];
 }
 
 export interface CitationData {
@@ -23,6 +27,7 @@ export interface CitationData {
 
 export interface EvidenceSegmentRef {
   citationIndex: number;
+  /** 빈 배열이면 해당 인용(버킷)의 전체 행을 의미 */
   rowNumbers: number[];
 }
 
@@ -34,6 +39,19 @@ export interface EvidenceDisplaySegment {
   fileName: string;
   sheetName: string;
   rows: CitationRowData[];
+  /** 원본 컬럼 순서 (없으면 모달이 레거시 5열로 폴백) */
+  headers?: string[];
+}
+
+function rowHasContent(row: CitationRowData): boolean {
+  if ((row.body?.trim() ?? "").length > 0) return true;
+  if ((row.title?.trim() ?? "").length > 0) return true;
+  if (row.cells) {
+    for (const value of Object.values(row.cells)) {
+      if (String(value ?? "").trim().length > 0) return true;
+    }
+  }
+  return false;
 }
 
 export function isCitationData(value: unknown): value is CitationData {
@@ -54,7 +72,7 @@ export function getCitationByIndex(
   return citations.find((source) => source.index === index);
 }
 
-/** #evidence-2:52,58|3:71 파싱 */
+/** #evidence-2:52,58|3:71 또는 행 없는 버킷 인용 #evidence-7 파싱 */
 export function parseEvidenceHref(href: string): EvidenceLinkTarget | null {
   const hash = href.startsWith("#") ? href.slice(1) : href;
   const match = /^evidence-([\d:,|]+)$/.exec(hash);
@@ -62,14 +80,14 @@ export function parseEvidenceHref(href: string): EvidenceLinkTarget | null {
 
   const segments: EvidenceSegmentRef[] = [];
   for (const part of match[1].split("|")) {
-    const segmentMatch = /^(\d{1,3}):([\d,]+)$/.exec(part.trim());
+    const segmentMatch = /^(\d{1,3})(?::([\d,]+))?$/.exec(part.trim());
     if (!segmentMatch) continue;
     const citationIndex = Number(segmentMatch[1]);
-    const rowNumbers = segmentMatch[2]
+    if (!Number.isFinite(citationIndex) || citationIndex <= 0) continue;
+    const rowNumbers = (segmentMatch[2] ?? "")
       .split(",")
       .map((value) => Number(value.trim()))
       .filter((value) => Number.isFinite(value) && value > 0);
-    if (!Number.isFinite(citationIndex) || citationIndex <= 0 || rowNumbers.length === 0) continue;
     segments.push({ citationIndex, rowNumbers });
   }
 
@@ -79,7 +97,7 @@ export function parseEvidenceHref(href: string): EvidenceLinkTarget | null {
 export function buildEvidenceHref(segments: EvidenceSegmentRef[]): string {
   const parts = segments.map((segment) => {
     const rows = [...new Set(segment.rowNumbers)].sort((a, b) => a - b);
-    return `${segment.citationIndex}:${rows.join(",")}`;
+    return rows.length > 0 ? `${segment.citationIndex}:${rows.join(",")}` : `${segment.citationIndex}`;
   });
   return `#evidence-${parts.join("|")}`;
 }
@@ -90,11 +108,29 @@ export function filterCitationRows(
 ): CitationRowData[] {
   const wanted = new Set(rowNumbers);
   const fromRows = source.rows.filter(
-    (row) => wanted.has(row.rowIndex) && (row.body?.trim() ?? "").length > 0
+    (row) => wanted.has(row.rowIndex) && rowHasContent(row)
   );
   if (fromRows.length > 0) return fromRows;
 
   if (rowNumbers.length === 1 && source.rowIndex === rowNumbers[0]) {
+    return [
+      {
+        rowIndex: source.rowIndex,
+        title: source.title,
+        body: source.body,
+        date: "",
+        community: "",
+      },
+    ];
+  }
+  return [];
+}
+
+/** 행 미지정(버킷) 인용 — source의 전체 행 반환 */
+function allCitationRows(source: CitationSource): CitationRowData[] {
+  const rows = source.rows.filter(rowHasContent);
+  if (rows.length > 0) return rows;
+  if ((source.body?.trim() ?? "").length > 0 || (source.title?.trim() ?? "").length > 0) {
     return [
       {
         rowIndex: source.rowIndex,
@@ -117,6 +153,9 @@ function mergeRowsIntoGroup(
   const key = `${source.fileName}\0${source.sheetName}`;
   const existing = grouped.get(key);
   if (existing) {
+    if ((existing.headers?.length ?? 0) === 0 && (source.headers?.length ?? 0) > 0) {
+      existing.headers = source.headers;
+    }
     const seen = new Set(existing.rows.map((row) => row.rowIndex));
     for (const row of rows) {
       if (!seen.has(row.rowIndex)) existing.rows.push(row);
@@ -127,6 +166,7 @@ function mergeRowsIntoGroup(
       fileName: source.fileName,
       sheetName: source.sheetName,
       rows: [...rows].sort((a, b) => a.rowIndex - b.rowIndex),
+      headers: source.headers,
     });
   }
 }
@@ -158,6 +198,11 @@ export function resolveEvidenceDisplaySegments(
     const source = getCitationByIndex(bodyCitations, ref.citationIndex);
     if (!source) {
       for (const row of ref.rowNumbers) unresolvedRows.add(row);
+      continue;
+    }
+
+    if (ref.rowNumbers.length === 0) {
+      mergeRowsIntoGroup(grouped, source, allCitationRows(source));
       continue;
     }
 
@@ -219,13 +264,13 @@ export function formatEvidenceLinkLabel(
 
 export function extractEvidenceIndices(content: string): Set<number> {
   const indices = new Set<number>();
-  for (const match of content.matchAll(/\[근거\s*(\d{1,3})\s*[:：]/gi)) {
+  for (const match of content.matchAll(/\[근거\s*(\d{1,3})\s*(?:[:：]|\])/gi)) {
     const index = Number(match[1]);
     if (Number.isFinite(index) && index > 0) indices.add(index);
   }
   for (const match of content.matchAll(/#evidence-([\d:,|]+)/gi)) {
     for (const part of match[1].split("|")) {
-      const segmentMatch = /^(\d{1,3}):/.exec(part);
+      const segmentMatch = /^(\d{1,3})/.exec(part);
       if (segmentMatch) indices.add(Number(segmentMatch[1]));
     }
   }
@@ -234,7 +279,10 @@ export function extractEvidenceIndices(content: string): Set<number> {
 
 export function isBodyContentCitation(source: CitationSource): boolean {
   if ((source.body?.trim() ?? "").length >= 10) return true;
-  return source.rows.some((row) => (row.body?.trim() ?? "").length >= 10);
+  if (source.rows.some((row) => (row.body?.trim() ?? "").length >= 10)) return true;
+  return source.rows.some(
+    (row) => row.cells && Object.values(row.cells).some((v) => String(v ?? "").trim().length > 0)
+  );
 }
 
 export function filterBodyContentCitations(
@@ -274,31 +322,35 @@ function parseRowNumbers(raw: string): number[] {
     .filter((value) => Number.isFinite(value) && value > 0);
 }
 
-/** `[근거 2:52,58]` 또는 `[근거 2:52;3:71]` 파싱 */
+/** `[근거 2:52,58]` / `[근거 2:52;3:71]` / 행 없는 `[근거 7]` 파싱 */
 function parseEvidenceTag(inner: string): EvidenceSegmentRef[] {
   const segments: EvidenceSegmentRef[] = [];
   for (const part of inner.split(";")) {
-    const match = /^\s*(\d{1,3})\s*[:：]\s*(.+)$/.exec(part.trim());
+    const match = /^\s*(\d{1,3})\s*(?:[:：]\s*(.+))?$/.exec(part.trim());
     if (!match) continue;
     const citationIndex = Number(match[1]);
-    const rowNumbers = parseRowNumbers(match[2]);
-    if (!Number.isFinite(citationIndex) || rowNumbers.length === 0) continue;
+    if (!Number.isFinite(citationIndex) || citationIndex <= 0) continue;
+    const rowNumbers = match[2] ? parseRowNumbers(match[2]) : [];
     segments.push({ citationIndex, rowNumbers });
   }
   return segments;
 }
 
 function mergeSegmentRefs(all: EvidenceSegmentRef[]): EvidenceSegmentRef[] {
-  const map = new Map<number, Set<number>>();
+  const map = new Map<number, { rows: Set<number>; all: boolean }>();
   for (const ref of all) {
-    const rows = map.get(ref.citationIndex) ?? new Set<number>();
-    for (const row of ref.rowNumbers) rows.add(row);
-    map.set(ref.citationIndex, rows);
+    const entry = map.get(ref.citationIndex) ?? { rows: new Set<number>(), all: false };
+    if (ref.rowNumbers.length === 0) {
+      entry.all = true;
+    } else {
+      for (const row of ref.rowNumbers) entry.rows.add(row);
+    }
+    map.set(ref.citationIndex, entry);
   }
   return [...map.entries()]
-    .map(([citationIndex, rows]) => ({
+    .map(([citationIndex, entry]) => ({
       citationIndex,
-      rowNumbers: [...rows].sort((a, b) => a - b),
+      rowNumbers: entry.all ? [] : [...entry.rows].sort((a, b) => a - b),
     }))
     .sort((a, b) => a.citationIndex - b.citationIndex);
 }
@@ -364,6 +416,19 @@ export function preprocessEvidenceLinks(
         if (tag[1]) allSegments.push(...parseEvidenceTag(tag[1]));
       }
       return allSegments.length > 0 ? ` ${buildLinkFromSegments(allSegments, citations)}` : "";
+    }
+  );
+
+  // 안전망: 마크다운 링크가 아닌 맨몸 #evidence-... (또는 (#evidence-...)) 평문 처리.
+  // 정상 링크 `[..](#evidence-..)`는 `(` 앞 문자가 `]`이므로 건너뜀.
+  result = result.replace(
+    /(\()?#evidence-([\d:,|]+)(\))?/g,
+    (match, leftParen, evidencePart, _rightParen, offset: number, full: string) => {
+      const charBefore = offset > 0 ? full[offset - 1] : "";
+      if (leftParen === "(" && charBefore === "]") return match;
+      const target = parseEvidenceHref(`#evidence-${evidencePart}`);
+      if (!target) return "";
+      return buildLinkFromSegments(target.segments, citations);
     }
   );
 

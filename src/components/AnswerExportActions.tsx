@@ -23,17 +23,20 @@ export default function AnswerExportActions({
   const bodyRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const hasContent = answerToPlainText(content).length > 0;
   const showActions = hasContent && !disabled;
 
   const handleCopy = async () => {
+    setActionError(null);
     try {
       await copyAnswerText(content);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch (error) {
       console.error("Copy failed:", error);
+      setActionError("복사에 실패했습니다. 브라우저 권한을 확인해 주세요.");
     }
   };
 
@@ -41,11 +44,13 @@ export default function AnswerExportActions({
     const element = bodyRef.current;
     if (!element) return;
 
+    setActionError(null);
     setDownloading(true);
     try {
       await downloadAnswerPdf(element, buildAnswerExportFilename("pdf"));
     } catch (error) {
       console.error("PDF export failed:", error);
+      setActionError("PDF 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.");
     } finally {
       setDownloading(false);
     }
@@ -95,6 +100,12 @@ export default function AnswerExportActions({
               </>
             )}
           </button>
+
+          {actionError && (
+            <p role="alert" className="text-xs text-red-600">
+              {actionError}
+            </p>
+          )}
         </div>
       )}
     </div>

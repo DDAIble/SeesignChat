@@ -136,12 +136,8 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
   const scrollToBottomIfAllowed = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container || userPinnedRef.current) return;
-    if (!isNearBottom(container)) {
-      userPinnedRef.current = true;
-      return;
-    }
     container.scrollTop = container.scrollHeight;
-  }, [isNearBottom]);
+  }, []);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -196,6 +192,14 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
       { body: { fileIds: excelFiles.map((f) => f.id), excelFiles } }
     );
     setInput("");
+  };
+
+  const handleRetry = () => {
+    if (isLoading || isLearning) return;
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const lastUserText = lastUser ? getMessageText(lastUser) : "";
+    clearError();
+    if (lastUserText.trim()) handleSend(lastUserText);
   };
 
   if (excelFiles.length === 0) {
@@ -282,6 +286,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
                   ? "rounded-tr-sm bg-slate-800 text-white whitespace-pre-wrap"
                   : "rounded-tl-sm bg-slate-100 text-slate-800"
               }`}
+              aria-live={msg.role === "assistant" && isStreamingThis ? "polite" : undefined}
             >
               {msg.role === "assistant" ? (
                 <>
@@ -334,7 +339,30 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
         )}
 
         {error && (
-          <p className="text-sm text-red-600 text-center">{error.message}</p>
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="mx-auto flex max-w-md flex-col items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-center"
+          >
+            <p className="text-sm text-red-600">{error.message || "오류가 발생했습니다."}</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleRetry}
+                disabled={isLoading || isLearning}
+                className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                다시 시도
+              </button>
+              <button
+                type="button"
+                onClick={() => clearError()}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
         )}
 
         <div ref={bottomRef} />

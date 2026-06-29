@@ -1,4 +1,6 @@
 import type { CommunitySheetData } from "./community-analysis";
+import { buildCellsFromRow } from "./chunking";
+import type { CitationSource } from "./citations";
 import {
   getCommunityField,
   normalizeTextForMatch,
@@ -6,6 +8,9 @@ import {
   rowMatchesKeyword,
 } from "./community-text-utils";
 import type { CommunityQueryIntent } from "./community-query-intent";
+
+/** 버킷 1건 모달에 표시할 최대 행 수 (집계 건수 자체는 표가 정확) */
+const MAX_BUCKET_ROWS = 200;
 
 export interface CommunityAggregationMeta {
   totalRowsScanned: number;
@@ -18,6 +23,7 @@ export interface CommunityAggregationMeta {
 export interface CommunityAggregationReport {
   text: string;
   meta: CommunityAggregationMeta;
+  citations: CitationSource[];
 }
 
 type MatchedRow = {
@@ -25,6 +31,71 @@ type MatchedRow = {
   row: Record<string, unknown>;
   rowIndex: number;
 };
+
+function buildBucketCitation(
+  index: number,
+  sheet: CommunitySheetData,
+  rows: MatchedRow[],
+  label: string
+): CitationSource {
+  const capped = rows.slice(0, MAX_BUCKET_ROWS);
+  const rowIndexes = capped.map((m) => m.rowIndex);
+  return {
+    index,
+    fileName: sheet.fileName,
+    sheetName: sheet.sheetName,
+    rowIndex: Math.min(...rowIndexes),
+    rowEnd: Math.max(...rowIndexes),
+    title: label,
+    body: label,
+    headers: sheet.headers,
+    rows: capped.map((m) => ({
+      rowIndex: m.rowIndex,
+      title: getCommunityField(m.row, "제목") || "-",
+      body: getCommunityField(m.row, "본문"),
+      date: getCommunityField(m.row, "게시날짜", "날짜", "작성일"),
+      community: getCommunityField(m.row, "커뮤니티") || getCommunityField(m.row, "게시판"),
+      cells: buildCellsFromRow(m.row, sheet.headers),
+    })),
+  };
+}
+
+/** 키워드별 매칭 행을 (시트 단위) 버킷 인용으로 생성. 키워드 -> 부여된 인덱스 목록 */
+function buildKeywordCitations(
+  matched: MatchedRow[],
+  keywords: string[],
+  indexBase: number
+): { citations: CitationSource[]; keywordIndices: Map<string, number[]> } {
+  const citations: CitationSource[] = [];
+  const keywordIndices = new Map<string, number[]>();
+  let nextIndex = indexBase;
+
+  for (const keyword of keywords) {
+    const bySheet = new Map<CommunitySheetData, MatchedRow[]>();
+    for (const m of matched) {
+      if (!rowMatchesKeyword(m.row, keyword)) continue;
+      const arr = bySheet.get(m.sheet) ?? [];
+      arr.push(m);
+      bySheet.set(m.sheet, arr);
+    }
+
+    const indices: number[] = [];
+    for (const [sheet, rows] of bySheet) {
+      if (rows.length === 0) continue;
+      const index = nextIndex++;
+      indices.push(index);
+      citations.push(buildBucketCitation(index, sheet, rows, `${keyword} 관련 ${rows.length}건`));
+    }
+    keywordIndices.set(keyword, indices);
+  }
+
+  return { citations, keywordIndices };
+}
+
+function formatEvidenceTags(indices: number[]): string {
+  if (indices.length === 0) return "-";
+  return indices.map((i) => `[근거 ${i}]`).join(" ");
+}
 
 function rowMatchesLabel(
   row: Record<string, unknown>,
@@ -180,7 +251,8 @@ function buildLabelKeywordPivot(
 
 export function buildCommunityAggregationReport(
   sheets: CommunitySheetData[],
-  intent: CommunityQueryIntent
+  intent: CommunityQueryIntent,
+  indexBase = 1
 ): CommunityAggregationReport {
   const totalRowsScanned = sheets.reduce((sum, sheet) => sum + sheet.rows.length, 0);
   const keywords = intent.keywords;
@@ -234,11 +306,14 @@ export function buildCommunityAggregationReport(
         labelFilter: intent.labelFilter,
         dateFilter: intent.dateFilter,
       },
+      citations: [],
     };
   }
 
   const matched = filterRows(sheets, intent);
   parts[2] = `- **전체 ${totalRowsScanned.toLocaleString()}행** 중 조건에 맞는 **${matched.length.toLocaleString()}건**을 서버에서 집계했습니다.`;
+
+  const { citations, keywordIndices } = buildKeywordCitations(matched, keywords, indexBase);
 
   if (matched.length === 0) {
     parts.push(
@@ -248,9 +323,16 @@ export function buildCommunityAggregationReport(
       ""
     );
   } else {
-    parts.push("#### 키워드별 건수", "", "| 키워드 | 건수 |", "| --- | ---: |");
+    parts.push(
+      "#### 키워드별 건수",
+      "",
+      "- **출처** 열의 `[근거 N]` 태그를 해당 키워드 통계를 언급한 문장 끝에 그대로 붙이세요.",
+      "",
+      "| 키워드 | 건수 | 출처 |",
+      "| --- | ---: | --- |"
+    );
     for (const [keyword, count] of buildKeywordCounts(matched, keywords)) {
-      parts.push(`| ${keyword} | **${count}건** |`);
+      parts.push(`| ${keyword} | **${count}건** | ${formatEvidenceTags(keywordIndices.get(keyword) ?? [])} |`);
     }
     parts.push("");
 
@@ -315,5 +397,6 @@ export function buildCommunityAggregationReport(
       labelFilter: intent.labelFilter,
       dateFilter: intent.dateFilter,
     },
+    citations,
   };
 }

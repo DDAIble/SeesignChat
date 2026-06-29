@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import {
@@ -9,7 +9,54 @@ import {
   type EvidenceDisplaySegment,
 } from "@/lib/citations";
 
-function CitationTable({ rows }: { rows: CitationRowData[] }) {
+/** 원본 엑셀 컬럼이 있으면 그대로, 없으면 레거시 5열로 폴백 */
+function CitationTable({
+  rows,
+  headers,
+}: {
+  rows: CitationRowData[];
+  headers?: string[];
+}) {
+  const hasCells = rows.some((row) => row.cells && Object.keys(row.cells).length > 0);
+  const originalColumns =
+    headers && headers.length > 0 && hasCells ? headers : null;
+
+  if (originalColumns) {
+    return (
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full border-collapse text-left text-xs">
+          <thead>
+            <tr className="border-b border-slate-200 bg-slate-50">
+              <th className="whitespace-nowrap px-3 py-2.5 font-semibold text-slate-700">행</th>
+              {originalColumns.map((header) => (
+                <th
+                  key={header}
+                  className="min-w-[8rem] px-3 py-2.5 font-semibold text-slate-700"
+                >
+                  {header || "(빈 컬럼)"}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 bg-white">
+            {rows.map((row) => (
+              <tr key={row.rowIndex} className="align-top hover:bg-slate-50/80">
+                <td className="whitespace-nowrap px-3 py-2.5 text-slate-500">{row.rowIndex}</td>
+                {originalColumns.map((header) => (
+                  <td key={header} className="max-w-md px-3 py-2.5 text-slate-700">
+                    <p className="whitespace-pre-wrap break-words">
+                      {row.cells?.[header]?.trim() || "-"}
+                    </p>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200">
       <table className="w-full min-w-[36rem] border-collapse text-left text-xs">
@@ -49,17 +96,52 @@ export default function CitationDetailModal({
 }) {
   const totalRows = countEvidenceRows(segments);
   const isEmpty = segments.length === 0 || totalRows === 0;
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    function getFocusable(): HTMLElement[] {
+      const root = dialogRef.current;
+      if (!root) return [];
+      return Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => !el.hasAttribute("disabled"));
     }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
     document.addEventListener("keydown", onKeyDown);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+
+    const focusable = getFocusable();
+    (focusable[0] ?? dialogRef.current)?.focus();
+
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = prevOverflow;
+      previouslyFocused?.focus?.();
     };
   }, [onClose]);
 
@@ -76,7 +158,11 @@ export default function CitationDetailModal({
         aria-label="닫기"
         onClick={onClose}
       />
-      <div className="relative z-10 flex max-h-[min(85vh,40rem)] w-full max-w-5xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="relative z-10 flex max-h-[min(85vh,40rem)] w-full max-w-5xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl outline-none"
+      >
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div className="min-w-0">
             <p className="text-xs font-medium text-emerald-700">출처</p>
@@ -118,7 +204,7 @@ export default function CitationDetailModal({
                     {segment.sheetName} · {segment.rows.map((row) => row.rowIndex).join(", ")}행
                   </p>
                 </div>
-                <CitationTable rows={segment.rows} />
+                <CitationTable rows={segment.rows} headers={segment.headers} />
               </div>
             ))
           )}

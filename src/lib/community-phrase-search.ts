@@ -1,5 +1,6 @@
 import type { CommunitySheetData } from "./community-analysis";
 import type { CitationSource } from "./citations";
+import { buildCellsFromRow } from "./chunking";
 import {
   getCommunityField,
   getRowTitleBody,
@@ -162,6 +163,8 @@ export function searchCommunityRowsByPhrases(
             board: getCommunityField(row, "게시판"),
             title,
             body,
+            headers: sheet.headers,
+            cells: buildCellsFromRow(row, sheet.headers),
             phrase,
             matchType: isExact ? "exact" : "similar",
             score,
@@ -267,6 +270,7 @@ function buildCitationsFromPhraseMatches(matches: PhraseRowMatch[]): CitationSou
     rowEnd: match.rowIndex,
     title: match.title || "(제목 없음)",
     body: match.body,
+    headers: match.headers,
     rows: [
       {
         rowIndex: match.rowIndex,
@@ -274,6 +278,7 @@ function buildCitationsFromPhraseMatches(matches: PhraseRowMatch[]): CitationSou
         body: match.body,
         date: match.date,
         community: match.community || match.board,
+        cells: match.cells,
       },
     ],
   }));

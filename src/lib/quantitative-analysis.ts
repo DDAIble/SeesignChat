@@ -1,8 +1,12 @@
 import { sheetLooksLikeCommunityPosts } from "./community-analysis";
+import { buildCellsFromRow } from "./chunking";
+import type { CitationSource } from "./citations";
 import { sheetLooksLikeQA } from "./qa-location";
 import type { ExcelData, SheetData } from "./types";
 
 const QUANT_FULL_ROW_LIMIT = Number(process.env.QUANT_FULL_ROW_LIMIT) || 5_000;
+/** 정량 시트 버킷 모달에 표시할 최대 행 수 */
+const MAX_QUANT_BUCKET_ROWS = 200;
 
 const QUANT_QUERY_RE =
   /매출|수익|매출액|통계|추이|트렌드|건수|비율|합계|평균|중앙값|최대|최소|최고|최저|월별|연별|분기|증감|성장|전년|전월|yoy|mom|revenue|sales|amount|count|trend|stat|numeric|수치|그래프|차트|표로|집계|합산|총액|거래|판매|실적|성과|비교.*수|수치.*분석|분석.*수치|언급|일별|주별|날짜별|며칠|몇\s*건|몇건/i;
@@ -133,7 +137,8 @@ function buildFullTable(sheet: SheetData): string[] {
 
 function buildQuantitativeSheetSection(
   fileName: string,
-  sheet: SheetData
+  sheet: SheetData,
+  evidenceIndex: number
 ): { text: string; rowCount: number } | null {
   if (!sheetLooksLikeQuantitative(sheet.headers, sheet.rows, fileName)) return null;
 
@@ -142,6 +147,7 @@ function buildQuantitativeSheetSection(
     "",
     `- **전체 ${sheet.rowCount.toLocaleString()}행**을 서버에서 전수 집계했습니다. (청크·RAG 샘플 아님)`,
     `- 컬럼: ${sheet.headers.join(", ")}`,
+    `- **출처**: 이 시트의 수치·통계를 언급한 문장 끝에 \`[근거 ${evidenceIndex}]\` 태그를 붙이세요.`,
     "",
     ...buildNumericSummaries(sheet.rows, sheet.headers),
   ];
@@ -159,10 +165,40 @@ function buildQuantitativeSheetSection(
   return { text: parts.join("\n"), rowCount: sheet.rowCount };
 }
 
-export function buildQuantitativeReport(files: ExcelData[]): {
+function buildQuantitativeSheetCitation(
+  index: number,
+  fileName: string,
+  sheet: SheetData
+): CitationSource {
+  const capped = sheet.rows.slice(0, MAX_QUANT_BUCKET_ROWS);
+  return {
+    index,
+    fileName,
+    sheetName: sheet.name,
+    rowIndex: 1,
+    rowEnd: capped.length,
+    title: `${sheet.name} 전체 ${sheet.rowCount.toLocaleString()}행`,
+    body: `${sheet.name} 정량 데이터 ${sheet.rowCount.toLocaleString()}행`,
+    headers: sheet.headers,
+    rows: capped.map((row, offset) => ({
+      rowIndex: offset + 1,
+      title: "-",
+      body: "",
+      date: "",
+      community: "",
+      cells: buildCellsFromRow(row, sheet.headers),
+    })),
+  };
+}
+
+export function buildQuantitativeReport(
+  files: ExcelData[],
+  indexBase = 1
+): {
   text: string;
   rowCount: number;
   sheetCount: number;
+  citations: CitationSource[];
 } {
   const sections: string[] = [
     "### 전수 통계 리포트 (정량 데이터 — 전체 행 서버 집계)",
@@ -175,22 +211,27 @@ export function buildQuantitativeReport(files: ExcelData[]): {
 
   let rowCount = 0;
   let sheetCount = 0;
+  const citations: CitationSource[] = [];
+  let nextIndex = indexBase;
 
   for (const file of files) {
     for (const sheet of file.sheets) {
-      const section = buildQuantitativeSheetSection(file.fileName, sheet);
+      const evidenceIndex = nextIndex;
+      const section = buildQuantitativeSheetSection(file.fileName, sheet, evidenceIndex);
       if (!section) continue;
       sections.push(section.text, "");
       rowCount += section.rowCount;
       sheetCount += 1;
+      citations.push(buildQuantitativeSheetCitation(evidenceIndex, file.fileName, sheet));
+      nextIndex += 1;
     }
   }
 
   if (sheetCount === 0) {
-    return { text: "", rowCount: 0, sheetCount: 0 };
+    return { text: "", rowCount: 0, sheetCount: 0, citations: [] };
   }
 
-  return { text: sections.join("\n"), rowCount, sheetCount };
+  return { text: sections.join("\n"), rowCount, sheetCount, citations };
 }
 
 export function fileHasQuantitativeSheets(file: ExcelData): boolean {

@@ -16,7 +16,20 @@ export interface ChunkDraft {
   title: string;
   body: string;
   citationRows: CitationRowData[];
+  headers: string[];
   dataType: ChunkDataType;
+}
+
+export function buildCellsFromRow(
+  row: Record<string, unknown>,
+  headers: string[]
+): Record<string, string> {
+  const cells: Record<string, string> = {};
+  for (const header of headers) {
+    const value = row[header];
+    cells[header] = value === undefined || value === null ? "" : String(value).trim();
+  }
+  return cells;
 }
 
 const DEFAULT_MAX_CHUNK_CHARS = 8_000;
@@ -86,6 +99,8 @@ function extractRowForTable(
   dataType: ChunkDataType,
   rowIndex: number
 ): CitationRowData {
+  const cells = buildCellsFromRow(row, headers);
+
   if (dataType === "community") {
     return {
       rowIndex,
@@ -93,6 +108,7 @@ function extractRowForTable(
       body: getField(row, "본문"),
       date: getField(row, "게시날짜", "날짜", "작성일"),
       community: getField(row, "커뮤니티"),
+      cells,
     };
   }
 
@@ -103,6 +119,7 @@ function extractRowForTable(
       body: getField(row, "본문", "질문내용", "내용"),
       date: getField(row, "게시날짜", "날짜", "작성일"),
       community: getField(row, "커뮤니티", "게시판"),
+      cells,
     };
   }
 
@@ -118,6 +135,7 @@ function extractRowForTable(
         .join(" · "),
     date: getField(row, "게시날짜", "날짜", "date", "Date", "작성일"),
     community: getField(row, "커뮤니티", "community", "Community", "게시판"),
+    cells,
   };
 }
 
@@ -256,6 +274,7 @@ export function chunkExcelFile(data: ExcelData): ChunkDraft[] {
         title: citation.title,
         body: citation.body,
         citationRows,
+        headers: sheet.headers,
         dataType,
       });
     }

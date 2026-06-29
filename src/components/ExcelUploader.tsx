@@ -6,6 +6,7 @@ import { uploadAndIndexFile } from "@/lib/upload-and-index";
 import type { ExcelData } from "@/lib/types";
 
 const MAX_FILES = 5;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const VALID_EXTENSIONS = [".xlsx", ".xls", ".csv"];
 
 interface ExcelUploaderProps {
@@ -16,7 +17,7 @@ interface ExcelUploaderProps {
   onClearAll?: () => void;
 }
 
-function isValidExcelFile(file: File): boolean {
+function hasValidExtension(file: File): boolean {
   const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
   return VALID_EXTENSIONS.includes(ext);
 }
@@ -32,10 +33,23 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
     async (fileList: FileList | File[]) => {
       setError(null);
 
-      const selected = Array.from(fileList).filter(isValidExcelFile);
-      if (selected.length === 0) {
+      const all = Array.from(fileList);
+      const withValidExt = all.filter(hasValidExtension);
+      if (withValidExt.length === 0) {
         setError("지원 형식: .xlsx, .xls, .csv");
         return;
+      }
+
+      const oversized = withValidExt.filter((file) => file.size > MAX_FILE_BYTES);
+      const selected = withValidExt.filter((file) => file.size <= MAX_FILE_BYTES);
+      if (selected.length === 0) {
+        const maxMb = Math.floor(MAX_FILE_BYTES / (1024 * 1024));
+        setError(`파일이 너무 큽니다. (최대 ${maxMb}MB)`);
+        return;
+      }
+      if (oversized.length > 0) {
+        const maxMb = Math.floor(MAX_FILE_BYTES / (1024 * 1024));
+        setError(`일부 파일이 ${maxMb}MB를 초과해 제외되었습니다.`);
       }
 
       if (remainingSlots <= 0) {

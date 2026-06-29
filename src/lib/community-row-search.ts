@@ -1,5 +1,6 @@
 import type { CommunitySheetData } from "./community-analysis";
 import type { CitationSource } from "./citations";
+import { buildCellsFromRow } from "./chunking";
 import {
   getCommunityField,
   parseCommunityDate,
@@ -17,6 +18,8 @@ export interface CommunityRowMatch {
   board: string;
   title: string;
   body: string;
+  headers: string[];
+  cells: Record<string, string>;
 }
 
 export interface CommunityRowSearchResult {
@@ -75,6 +78,8 @@ export function searchCommunityRows(
         board: getCommunityField(row, "게시판"),
         title: getCommunityField(row, "제목"),
         body: getCommunityField(row, "본문"),
+        headers: sheet.headers,
+        cells: buildCellsFromRow(row, sheet.headers),
       });
 
       if (matches.length >= limit) break outer;
@@ -142,6 +147,7 @@ function buildCitationsFromRows(matches: CommunityRowMatch[]): CitationSource[] 
     rowEnd: match.rowIndex,
     title: match.title || "(제목 없음)",
     body: match.body,
+    headers: match.headers,
     rows: [
       {
         rowIndex: match.rowIndex,
@@ -149,6 +155,7 @@ function buildCitationsFromRows(matches: CommunityRowMatch[]): CitationSource[] 
         body: match.body,
         date: match.date,
         community: match.community || match.board,
+        cells: match.cells,
       },
     ],
   }));

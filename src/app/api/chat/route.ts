@@ -42,10 +42,38 @@ import {
 import { searchRelevantChunks } from "@/lib/rag";
 import { sheetLooksLikeQA } from "@/lib/qa-location";
 import type { ExcelData } from "@/lib/types";
+import type { CitationSource } from "@/lib/citations";
+
+/** 통합 인용 인덱스 공간 — 경로별 충돌 방지 (parseEvidence는 최대 3자리=999까지 허용) */
+const AGG_CITATION_BASE = 300;
+const QUANT_CITATION_BASE = 600;
+
+const TOKEN_LIMIT_MESSAGE =
+  "데이터가 너무 커서 AI 입력 한도를 초과했습니다. 파일 수를 줄여주세요.";
+const GENERIC_ANSWER_ERROR_MESSAGE =
+  "답변을 생성하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+const SOURCE_LOOKUP_DISCLAIMER =
+  "> **안내**: 아래 답변의 일부 인용이 업로드된 원문과 정확히 일치하지 않습니다. 동일 원문이 없거나 AI가 요약·합성한 표현일 수 있으니, 출처가 중요하면 해당 문장을 다시 확인해 주세요.\n\n";
+
+/** Gemini 토큰 한도 초과 여부 — 메시지 문구 변경에 견디도록 상태코드도 확인 */
+function isTokenLimitError(error: unknown): boolean {
+  if (!APICallError.isInstance(error)) return false;
+  const message = (error.message ?? "").toLowerCase();
+  if (
+    message.includes("token count exceeds") ||
+    message.includes("maximum number of tokens") ||
+    message.includes("input token") ||
+    message.includes("request payload size") ||
+    message.includes("exceeds the maximum")
+  ) {
+    return true;
+  }
+  return error.statusCode === 413;
+}
 
 export const maxDuration = 300;
 
-const DEFAULT_GEMINI_MODEL = "gemini-2.0-flash";
+const DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview";
 
 function getUserMessageTexts(messages: UIMessage[]): string[] {
   return messages
@@ -123,7 +151,10 @@ function buildSystemPrompt(
 - **절대 금지**: 마케팅 페르소나, Macro-Avatar, Desire, Limiting Belief, 정성적 여론 프레임으로 매출·통계 질문에 답하기
 - **절대 금지**: RAG로 가져온 게시글 본문 일부만 보고 전체 매출·통계·언급 건수를 추정하기
 - 집계표에 없는 숫자는 "집계 불가"라고 답하세요.
-- 답변 형식: ## 제목 → GFM **표** → 수치 해석 불릿 → (요청 시) \`\`\`chart JSON
+- **출처 표기(필수)**: **전수 통계 리포트**의 특정 시트 수치를 분석·요약한 **문장 끝마다**, 해당 시트 섹션의 **출처** 줄에 적힌 \`[근거 N]\` 태그를 **그대로 하나** 붙이세요. 「커뮤니티 키워드 집계」 수치는 그 표의 출처 열 \`[근거 N]\`을 사용하세요.
+- \`[근거 N]\`의 N은 리포트에 적힌 숫자만 사용하세요. 표/리포트에 출처가 없으면 태그를 붙이지 마세요.
+- **절대 금지**: 마크다운 링크·\`#evidence-\`·\`[출처]\` 직접 작성 — \`[근거 N]\` 태그만 출력하면 화면이 자동으로 **[출처 N건]** 버튼으로 변환합니다.
+- 답변 형식: ## 제목 → GFM **표** → 수치 해석 불릿(끝에 \`[근거 N]\`) → (요청 시) \`\`\`chart JSON
 `
     : "";
 
@@ -133,6 +164,9 @@ function buildSystemPrompt(
 - **### 커뮤니티 키워드 집계** 섹션의 표 숫자만 사용하세요.
 - chart JSON의 data·values·series는 **집계표 숫자와 정확히 일치**해야 합니다.
 - 집계표에 없는 날짜·키워드 조합의 숫자를 만들지 마세요.
+- **출처 표기(필수)**: 특정 키워드의 건수·비율·분포를 분석·요약한 **문장 끝마다**, 「키워드별 건수」 표의 **출처** 열에 적힌 \`[근거 N]\` 태그를 **그대로 하나** 붙이세요. (예: "질문이 46건으로 가장 많았습니다 [근거 301].")
+- \`[근거 N]\`의 N은 표에 적힌 숫자를 그대로 쓰세요. 임의의 숫자를 만들지 마세요. 표에 출처가 \`-\`이면 태그를 붙이지 마세요.
+- **절대 금지**: 마크다운 링크·\`#evidence-\`·\`[출처]\` 직접 작성 — \`[근거 N]\` 태그만 출력하면 화면이 자동으로 **[출처 N건]** 버튼으로 변환합니다.
 `
     : "";
 
@@ -514,6 +548,7 @@ export async function POST(request: Request) {
           write: (part) => writer.write(part as Parameters<typeof writer.write>[0]),
         });
 
+        try {
         trace.upsertStep({
           id: "upload",
           label: "업로드 파일 확인",
@@ -578,8 +613,11 @@ export async function POST(request: Request) {
         let useCommunitySummaryRules = false;
         let useCommunitySourceLookupRules = false;
 
-        const quantReport = buildQuantitativeReport(excelFilesResolved);
+        const turnCitations: CitationSource[] = [];
+
+        const quantReport = buildQuantitativeReport(excelFilesResolved, QUANT_CITATION_BASE);
         if (quantReport.sheetCount > 0) {
+          turnCitations.push(...quantReport.citations);
           trace.upsertStep({
             id: "quant-report",
             label: "정량 데이터 전수 집계",
@@ -615,7 +653,12 @@ export async function POST(request: Request) {
             detail: "제목·본문 기준 전수 스캔 — RAG 사용 안 함",
           });
 
-          const aggregationReport = buildCommunityAggregationReport(communitySheets, communityIntent);
+          const aggregationReport = buildCommunityAggregationReport(
+            communitySheets,
+            communityIntent,
+            AGG_CITATION_BASE
+          );
+          turnCitations.push(...aggregationReport.citations);
           dataContext = appendCommunityAggregationContext(
             dataContext,
             aggregationReport.text,
@@ -662,13 +705,7 @@ export async function POST(request: Request) {
           );
           useCommunitySourceLookupRules = true;
 
-          if (phraseSearch.citations.length > 0) {
-            writer.write({
-              type: "data-citations",
-              id: "citations",
-              data: { sources: phraseSearch.citations },
-            } as Parameters<typeof writer.write>[0]);
-          }
+          turnCitations.push(...phraseSearch.citations);
 
           trace.patchStep("community-phrase-search", {
             status: "done",
@@ -689,13 +726,7 @@ export async function POST(request: Request) {
           quoteCorpus = buildCommunityCorpus(communitySheets);
           useCommunityQuoteRules = true;
 
-          if (rowSearch.citations.length > 0) {
-            writer.write({
-              type: "data-citations",
-              id: "citations",
-              data: { sources: rowSearch.citations },
-            } as Parameters<typeof writer.write>[0]);
-          }
+          turnCitations.push(...rowSearch.citations);
 
           trace.patchStep("community-row-search", {
             status: "done",
@@ -741,13 +772,7 @@ export async function POST(request: Request) {
           const rag = await searchRelevantChunks(ragFileIds, userQuery, ragKeywords);
           dataContext = appendRAGContext(dataContext, rag.contextText, contextMeta, rag.chunks.length);
 
-          if (rag.citations.length > 0) {
-            writer.write({
-              type: "data-citations",
-              id: "citations",
-              data: { sources: rag.citations },
-            } as Parameters<typeof writer.write>[0]);
-          }
+          turnCitations.push(...rag.citations);
 
           trace.patchStep("rag", {
             status: "done",
@@ -767,6 +792,14 @@ export async function POST(request: Request) {
               ? "통계·매출 질문 — RAG 생략 (전수 집계 사용)"
               : "텍스트 검색 대상 없음",
           });
+        }
+
+        if (turnCitations.length > 0) {
+          writer.write({
+            type: "data-citations",
+            id: "citations",
+            data: { sources: turnCitations },
+          } as Parameters<typeof writer.write>[0]);
         }
 
         trace.upsertStep({
@@ -805,6 +838,21 @@ export async function POST(request: Request) {
           });
           writer.merge(result.toUIMessageStream());
           answerText = await result.text;
+
+          if (communitySheets.length > 0) {
+            const lookupCorpus = buildCommunityCorpus(communitySheets);
+            const quoteCheck = verifyQuotesInAnswer(answerText, lookupCorpus);
+            if (!quoteCheck.passed) {
+              trace.upsertStep({
+                id: "quote-verify",
+                label: "출처 인용 검증",
+                status: "done",
+                detail: `원문 불일치 인용 ${quoteCheck.failedQuotes.length}건`,
+              });
+              answerText = SOURCE_LOOKUP_DISCLAIMER + answerText;
+              writeAssistantText(writer, SOURCE_LOOKUP_DISCLAIMER.trim());
+            }
+          }
         } else {
           const result = streamText({
             model,
@@ -854,6 +902,19 @@ export async function POST(request: Request) {
             console.error("Follow-up question generation failed:", followUpError);
           }
         }
+        } catch (streamError) {
+          console.error("Chat stream execution error:", streamError);
+          const message = isTokenLimitError(streamError)
+            ? TOKEN_LIMIT_MESSAGE
+            : GENERIC_ANSWER_ERROR_MESSAGE;
+          trace.upsertStep({
+            id: "answer",
+            label: "질문에 맞는 답변 작성",
+            status: "error",
+            detail: message,
+          });
+          writeAssistantText(writer, message);
+        }
       },
     });
 
@@ -861,17 +922,9 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Chat error:", error);
 
-    const isTokenLimit =
-      APICallError.isInstance(error) &&
-      (error.message.includes("token count exceeds") ||
-        error.message.includes("maximum number of tokens"));
-
-    if (isTokenLimit) {
+    if (isTokenLimitError(error)) {
       return new Response(
-        JSON.stringify({
-          error:
-            "데이터가 너무 커서 AI 입력 한도를 초과했습니다. 파일 수를 줄이거나, .env에 GEMINI_MAX_CONTEXT_CHARS=500000 처럼 더 낮게 설정해 주세요.",
-        }),
+        JSON.stringify({ error: TOKEN_LIMIT_MESSAGE }),
         { status: 413, headers: { "Content-Type": "application/json" } }
       );
     }

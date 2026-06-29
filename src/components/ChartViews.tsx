@@ -52,7 +52,11 @@ function formatNumber(value: number): string {
 
 function ChartShell({ title, children }: { title?: string; children: ReactNode }) {
   return (
-    <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm last:mb-0">
+    <div
+      className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm last:mb-0"
+      role="img"
+      aria-label={title ? `차트: ${title}` : "데이터 차트"}
+    >
       {title && <h4 className="mb-3 text-sm font-semibold text-slate-900">{title}</h4>}
       {children}
     </div>

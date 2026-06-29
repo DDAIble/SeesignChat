@@ -165,6 +165,8 @@ export function buildCitationsFromChunks(
             },
           ];
 
+    const hasCells = rows.some((row) => row.cells && Object.keys(row.cells).length > 0);
+
     return {
       index: index + 1,
       fileName: chunk.fileName,
@@ -174,6 +176,7 @@ export function buildCitationsFromChunks(
       title: chunk.title || `${chunk.fileName} / ${chunk.sheetName}`,
       body: chunk.body || chunk.text.slice(0, 500),
       rows,
+      headers: hasCells ? chunk.headers : undefined,
     };
   });
 }

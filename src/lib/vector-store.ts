@@ -12,6 +12,7 @@ export interface DocumentChunk {
   title?: string;
   body?: string;
   citationRows?: CitationRowData[];
+  headers?: string[];
   dataType: ChunkDataType;
   embedding: number[];
 }

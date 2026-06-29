@@ -20,7 +20,7 @@ export default function MermaidChart({ code }: MermaidChartProps) {
         mermaid.initialize({
           startOnLoad: false,
           theme: "neutral",
-          securityLevel: "loose",
+          securityLevel: "strict",
           fontFamily: "inherit",
         });
 
