@@ -28,6 +28,10 @@ export interface AIContextMeta {
   ragChunks: number;
   quantitativeMode: boolean;
   quantitativeRows: number;
+  communityAggregationUsed: boolean;
+  communityQuoteMode: boolean;
+  matchedKeywords: string[];
+  aggregationRowCount: number;
 }
 
 export interface AIContextResult {
@@ -251,6 +255,10 @@ export function buildAIContext(
     ragChunks: 0,
     quantitativeMode: false,
     quantitativeRows: 0,
+    communityAggregationUsed: false,
+    communityQuoteMode: false,
+    matchedKeywords: [],
+    aggregationRowCount: 0,
   };
   const budget = { remaining: getMaxContextChars() };
 
@@ -337,4 +345,27 @@ export function appendRAGContext(
     return baseContext;
   }
   return `${baseContext}\n\n${ragText}`;
+}
+
+export function appendCommunityAggregationContext(
+  baseContext: string,
+  aggregationText: string,
+  meta: AIContextMeta,
+  options: { matchedKeywords: string[]; matchedRowCount: number }
+): string {
+  meta.communityAggregationUsed = true;
+  meta.matchedKeywords = options.matchedKeywords;
+  meta.aggregationRowCount = options.matchedRowCount;
+  if (!aggregationText.trim()) return baseContext;
+  return `${baseContext}\n\n${aggregationText}`;
+}
+
+export function appendCommunityQuoteContext(
+  baseContext: string,
+  quoteText: string,
+  meta: AIContextMeta
+): string {
+  meta.communityQuoteMode = true;
+  if (!quoteText.trim()) return baseContext;
+  return `${baseContext}\n\n${quoteText}`;
 }

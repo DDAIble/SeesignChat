@@ -82,6 +82,23 @@ class VectorStore {
     results.sort((a, b) => b.score - a.score);
     return results.slice(0, topK);
   }
+
+  getChunksForFiles(fileIds: string[]): DocumentChunk[] {
+    const allowed = new Set(fileIds);
+    const results: DocumentChunk[] = [];
+    for (const chunk of this.chunks.values()) {
+      if (allowed.has(chunk.fileId)) results.push(chunk);
+    }
+    return results;
+  }
+
+  getTotalChunkCount(fileIds: string[]): number {
+    let count = 0;
+    for (const fileId of fileIds) {
+      count += this.fileChunkIds.get(fileId)?.size ?? 0;
+    }
+    return count;
+  }
 }
 
 const globalForVectorStore = globalThis as unknown as {

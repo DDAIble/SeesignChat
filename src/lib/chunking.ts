@@ -1,4 +1,4 @@
-import { formatRowForBatch, sheetLooksLikeCommunityPosts } from "./community-analysis";
+import { formatRowForBatch, formatRowForRAG, sheetLooksLikeCommunityPosts } from "./community-analysis";
 import type { CitationRowData } from "./citations";
 import { compactRowForAI, sheetLooksLikeQA } from "./qa-location";
 import type { ExcelData } from "./types";
@@ -209,7 +209,7 @@ function formatRowGroup(
     .map((row, offset) => {
       const rowIndex = startRowIndex + offset;
       if (dataType === "community") {
-        return formatRowForBatch(row, rowIndex);
+        return formatRowForRAG(row, rowIndex);
       }
       if (dataType === "qa") {
         return `--- 행 ${rowIndex} ---\n${formatQARow(row, headers)}`;

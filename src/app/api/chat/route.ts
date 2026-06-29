@@ -4,18 +4,38 @@ import {
   convertToModelMessages,
   createUIMessageStream,
   createUIMessageStreamResponse,
+  generateId,
+  generateText,
   streamText,
   UIMessage,
 } from "ai";
 import { createAnalysisTraceEmitter } from "@/lib/analysis-trace";
-import { appendQuantitativeContext, appendRAGContext, buildAIContext } from "@/lib/excel";
+import { buildCommunityAggregationReport } from "@/lib/community-aggregation";
+import { collectCommunitySheets, sheetLooksLikeCommunityPosts } from "@/lib/community-analysis";
+import { collectKnownKeywordsFromData } from "@/lib/community-text-utils";
+import { detectCommunityQueryIntent, extractKeywordsFromQuery, isCommunityCountIntent, shouldUseSummaryRag } from "@/lib/community-query-intent";
+import {
+  buildCommunityCorpus,
+  searchCommunityRows,
+} from "@/lib/community-row-search";
+import {
+  appendCommunityAggregationContext,
+  appendCommunityQuoteContext,
+  appendQuantitativeContext,
+  appendRAGContext,
+  buildAIContext,
+} from "@/lib/excel";
 import { generateFollowUpQuestions } from "@/lib/follow-up-questions";
 import {
   buildQuantitativeReport,
   isQuantitativeAnalysisQuery,
 } from "@/lib/quantitative-analysis";
+import {
+  QUOTE_DISCLAIMER,
+  VERBATIM_RETRY_SUFFIX,
+  verifyQuotesInAnswer,
+} from "@/lib/quote-verification";
 import { searchRelevantChunks } from "@/lib/rag";
-import { sheetLooksLikeCommunityPosts } from "@/lib/community-analysis";
 import { sheetLooksLikeQA } from "@/lib/qa-location";
 import type { ExcelData } from "@/lib/types";
 
@@ -68,24 +88,66 @@ function buildSystemPrompt(
   excelFiles: ExcelData[],
   dataContext: string,
   contextMeta: ReturnType<typeof buildAIContext>["meta"],
-  options: { quantitativeQuery: boolean }
+  options: {
+    quantitativeQuery: boolean;
+    useCommunityCountRules: boolean;
+    useCommunityQuoteRules: boolean;
+    useCommunitySummaryRules: boolean;
+  }
 ): string {
-  const dataScopeRule = contextMeta.quantitativeMode
+  const dataScopeRule = contextMeta.communityAggregationUsed
+    ? `- **커뮤니티 키워드 집계** 리포트에 **${contextMeta.aggregationRowCount.toLocaleString()}건** 매칭 결과가 포함되었습니다. 건수·일별·교차표·차트 답변은 **이 집계표 숫자만** 사용하세요. RAG·추정·샘플로 숫자를 만들지 마세요.`
+    : contextMeta.communityQuoteMode
+    ? `- **인용 가능 원문** 섹션에 검색된 게시글만 인용하세요. 제목·본문을 **글자 그대로** 복사하세요.`
+    : contextMeta.quantitativeMode
     ? `- **전수 통계 리포트**에 **${contextMeta.quantitativeRows.toLocaleString()}행** 정량 데이터가 포함되었습니다. 매출·통계·추이·비율 답변은 **이 리포트의 수치·표만** 사용하세요. RAG 청크·게시글 본문으로 수치를 만들지 마세요.`
     : contextMeta.ragChunks > 0
-    ? `- 질문과 관련된 **${contextMeta.ragChunks}건**의 행을 RAG(임베딩 검색)로 찾았습니다. **정성·본문 분석**에만 사용하세요.`
+    ? `- 질문과 관련된 **${contextMeta.ragChunks}건**의 행을 RAG(임베딩 검색)로 찾았습니다. **정성·본문 분석**에만 사용하세요. 건수·통계에는 사용하지 마세요.`
     : contextMeta.truncated
       ? `- 상세 행 JSON은 토큰 한도로 **${contextMeta.includedRows.toLocaleString()}행**만 포함되었습니다. Q&A는 **인사이트 리포트(전체 ${contextMeta.scannedRows.toLocaleString()}행 기준)**를 우선 활용하세요.`
       : `- 업로드된 **전체 ${contextMeta.scannedRows.toLocaleString()}행**을 서버에서 읽었습니다.`;
 
-  const quantitativeRules = options.quantitativeQuery || contextMeta.quantitativeMode
+  const quantitativeRules =
+    options.quantitativeQuery || contextMeta.quantitativeMode || options.useCommunityCountRules
     ? `
-## 정량·매출·통계 질문 — 최우선 규칙
-- 사용자가 통계·매출·수익·추이·트렌드·건수·비율·실적을 물었습니다.
-- **전수 통계 리포트**와 Q&A **인사이트 리포트 순위표**의 숫자만 근거로 하세요.
+## 정량·매출·통계·건수 질문 — 최우선 규칙
+- 사용자가 통계·매출·수익·추이·트렌드·건수·비율·실적·언급 횟수를 물었습니다.
+- **전수 통계 리포트**, **커뮤니티 키워드 집계**, Q&A **인사이트 리포트 순위표**의 숫자만 근거로 하세요.
 - **절대 금지**: 마케팅 페르소나, Macro-Avatar, Desire, Limiting Belief, 정성적 여론 프레임으로 매출·통계 질문에 답하기
-- **절대 금지**: RAG로 가져온 게시글 본문 일부만 보고 전체 매출·통계를 추정하기
+- **절대 금지**: RAG로 가져온 게시글 본문 일부만 보고 전체 매출·통계·언급 건수를 추정하기
+- 집계표에 없는 숫자는 "집계 불가"라고 답하세요.
 - 답변 형식: ## 제목 → GFM **표** → 수치 해석 불릿 → (요청 시) \`\`\`chart JSON
+`
+    : "";
+
+  const communityCountRules = options.useCommunityCountRules
+    ? `
+## 커뮤니티 키워드 건수 — 반드시 지킬 규칙
+- **### 커뮤니티 키워드 집계** 섹션의 표 숫자만 사용하세요.
+- chart JSON의 data·values·series는 **집계표 숫자와 정확히 일치**해야 합니다.
+- 집계표에 없는 날짜·키워드 조합의 숫자를 만들지 마세요.
+`
+    : "";
+
+  const communityQuoteRules = options.useCommunityQuoteRules
+    ? `
+## 커뮤니티 원문 인용 — 반드시 지킬 규칙
+- **### 인용 가능 원문** 섹션에 있는 **제목·본문만** 인용하세요.
+- 인용문은 **글자 그대로** 복사하세요. 요약·의역·재작성 금지.
+- 원문에 없는 문장을 따옴표·인용 블록(>)으로 만들지 마세요.
+- 검색 결과가 0건이면 "해당 조건의 원문을 데이터에서 찾지 못했습니다"라고만 답하세요.
+- 긍정/부정 **요약 문장**을 원문인 것처럼 쓰지 마세요. 원문을 보여주거나 없다고 하세요.
+`
+    : "";
+
+  const communitySummaryRules = options.useCommunitySummaryRules
+    ? `
+## 커뮤니티 맥락·여론 요약 — 반드시 지킬 규칙
+- **하이브리드 RAG** 검색 결과 청크 **텍스트만** 근거로 주제·여론·반응을 서술하세요.
+- **건수·비율·순위 숫자를 생성하지 마세요.** 건수는 **커뮤니티 키워드 집계** 표만 사용하세요. 집계표가 없으면 "건수는 집계 불가"라고 답하세요.
+- RAG 청크에 없는 강사명·표현·사건을 만들지 마세요.
+- "~하는 경향", "주요 불만" 등 **서술**은 가능하나, 따옴표·인용 블록은 청크 원문에 있는 문장만 사용하세요.
+- 집계표와 RAG가 함께 있으면: **숫자=집계표**, **여론·맥락=RAG** 로 역할을 분리하세요.
 `
     : "";
 
@@ -102,14 +164,18 @@ function buildSystemPrompt(
 - 합계, 평균, 중앙값, 최대/최소, 비율, 추이, 순위 등을 **전수 통계 리포트·집계 표**의 숫자로 계산하세요.
 - 수치 비교·집계가 필요하면 표나 chart JSON으로 정리하세요.
 ${quantitativeRules}
+${communityCountRules}
+${communityQuoteRules}
+${communitySummaryRules}
 
 ## 정성 데이터 — 커뮤니티 게시글·텍스트
-- **'질문 관련 검색 결과 (RAG)'** 섹션이 있으면, 질문과 의미적으로 가까운 행입니다. 이를 1순위 근거로 사용하세요.
+- **'질문 관련 검색 결과 (하이브리드 RAG)'** 섹션이 있으면, 벡터+키워드로 선별한 청크입니다. **주제·여론 요약**에만 사용하세요. 건수·통계에는 사용하지 마세요.
+- **'커뮤니티 키워드 집계'** 또는 **'인용 가능 원문'** 섹션이 있으면 해당 섹션을 1순위 근거로 사용하세요.
 - 답변 본문에는 **[1], [2]** 같은 인용 번호를 **표기하지 마세요**. 출처는 화면 하단 목록으로 자동 표시됩니다.
 - 강조는 마크다운 **볼드**를 사용하세요. 예: **단 것**, **재미있는 사담**. 강조 기호와 글자 사이에 공백을 넣지 마세요 (잘못된 예: ** 단 것 **).
-- 데이터 개요의 게시판·라벨·키워드 컬럼 통계는 건수 근거로 활용하세요.
-- 반복 주제, 니즈, 불만·칭찬, 제품·혜택 언급을 정리하고, 필요 시 짧게 인용하세요.
-- RAG 검색 결과에 없는 내용은 추측하지 마세요.
+- 데이터 개요의 게시판·라벨 분포는 참고용입니다. **키워드별·일별 건수**는 반드시 **커뮤니티 키워드 집계** 표를 사용하세요.
+- 반복 주제·니즈·불만·칭찬을 정리할 때, **원문 인용**은 **인용 가능 원문** 섹션에서만 글자 그대로 복사하세요.
+- 제공된 데이터·집계·검색 결과에 없는 내용은 추측하지 마세요.
 
 ## Q&A 데이터 — 핵심 목적: **핫스팟·인사이트 분석**
 사용자의 주요 목적은 특정 문항 추출이 아니라, **전체 Q&A에서 질문이 많이 몰린 위치를 파악**하고 **강사에게 전달할 인사이트**를 도출하는 것입니다.
@@ -283,6 +349,79 @@ ${dataContext}
 === 데이터 끝 ===`;
 }
 
+function writeAssistantText(
+  writer: { write: (part: never) => void },
+  text: string
+): void {
+  const textId = generateId();
+  writer.write({ type: "text-start", id: textId } as never);
+  writer.write({ type: "text-delta", id: textId, delta: text } as never);
+  writer.write({ type: "text-end", id: textId } as never);
+}
+
+async function generateWithQuoteVerification(options: {
+  model: Parameters<typeof generateText>[0]["model"];
+  systemPrompt: string;
+  modelMessages: Awaited<ReturnType<typeof convertToModelMessages>>;
+  corpus: string[];
+  trace: ReturnType<typeof createAnalysisTraceEmitter>;
+}): Promise<string> {
+  const { model, systemPrompt, modelMessages, corpus, trace } = options;
+
+  trace.upsertStep({
+    id: "quote-verify",
+    label: "원문 인용 검증",
+    status: "running",
+    detail: "답변의 인용문이 업로드 데이터와 일치하는지 확인",
+  });
+
+  let answerText = (
+    await generateText({
+      model,
+      system: systemPrompt,
+      messages: modelMessages,
+    })
+  ).text;
+
+  let verification = verifyQuotesInAnswer(answerText, corpus);
+
+  if (!verification.passed && verification.checkedQuotes.length > 0) {
+    trace.patchStep("quote-verify", {
+      status: "running",
+      detail: `인용 불일치 ${verification.failedQuotes.length}건 — 재생성 시도`,
+    });
+
+    answerText = (
+      await generateText({
+        model,
+        system: systemPrompt + VERBATIM_RETRY_SUFFIX,
+        messages: modelMessages,
+      })
+    ).text;
+
+    verification = verifyQuotesInAnswer(answerText, corpus);
+
+    if (!verification.passed) {
+      answerText = QUOTE_DISCLAIMER + answerText;
+      trace.patchStep("quote-verify", {
+        status: "done",
+        detail: `재검증 실패 — 맥락 기반 생성 안내 추가 (${verification.failedQuotes.length}건 불일치)`,
+      });
+      return answerText;
+    }
+  }
+
+  trace.patchStep("quote-verify", {
+    status: "done",
+    detail:
+      verification.checkedQuotes.length > 0
+        ? `인용 ${verification.checkedQuotes.length}건 검증 통과`
+        : "인용문 없음 — 검증 생략",
+  });
+
+  return answerText;
+}
+
 export async function POST(request: Request) {
   try {
     const { messages, excelFiles, fileIds } = (await request.json()) as {
@@ -381,8 +520,19 @@ export async function POST(request: Request) {
         const { text: baseContext, meta: contextMeta } = buildAIContext(excelFilesResolved, userTexts);
 
         const userQuery = getLatestUserQuery(messages);
-        const quantitativeQuery = isQuantitativeAnalysisQuery(userQuery);
+        let quantitativeQuery = isQuantitativeAnalysisQuery(userQuery);
         let dataContext = baseContext;
+
+        const communitySheets = collectCommunitySheets(excelFilesResolved);
+        const communityIntent = detectCommunityQueryIntent(
+          userQuery,
+          excelFilesResolved,
+          uploads.communityRows > 0
+        );
+        let quoteCorpus: string[] = [];
+        let useCommunityCountRules = false;
+        let useCommunityQuoteRules = false;
+        let useCommunitySummaryRules = false;
 
         const quantReport = buildQuantitativeReport(excelFilesResolved);
         if (quantReport.sheetCount > 0) {
@@ -412,23 +562,97 @@ export async function POST(request: Request) {
         if (uploads.qaRows > 0) {
           trace.patchStep("qa-report", { status: "done" });
         }
+
+        if (isCommunityCountIntent(communityIntent.type) && communitySheets.length > 0) {
+          trace.upsertStep({
+            id: "community-aggregation",
+            label: "키워드 전수 집계",
+            status: "running",
+            detail: "제목·본문 기준 전수 스캔 — RAG 사용 안 함",
+          });
+
+          const aggregationReport = buildCommunityAggregationReport(communitySheets, communityIntent);
+          dataContext = appendCommunityAggregationContext(
+            dataContext,
+            aggregationReport.text,
+            contextMeta,
+            {
+              matchedKeywords: aggregationReport.meta.keywords,
+              matchedRowCount: aggregationReport.meta.matchedRowCount,
+            }
+          );
+          useCommunityCountRules = true;
+          quantitativeQuery = true;
+
+          if (communityIntent.type === "community_count_and_summary") {
+            useCommunitySummaryRules = true;
+          }
+
+          trace.patchStep("community-aggregation", {
+            status: "done",
+            detail: `${aggregationReport.meta.matchedRowCount.toLocaleString()}건 매칭 · 키워드 ${aggregationReport.meta.keywords.join(", ") || "(없음)"} · 전수 집계`,
+          });
+        }
+
+        if (communityIntent.type === "community_quote" && communitySheets.length > 0) {
+          trace.upsertStep({
+            id: "community-row-search",
+            label: "원문 행 검색",
+            status: "running",
+            detail: "제목·본문에서 인용 가능 원문 검색",
+          });
+
+          const rowSearch = searchCommunityRows(communitySheets, communityIntent);
+          dataContext = appendCommunityQuoteContext(dataContext, rowSearch.contextText, contextMeta);
+          quoteCorpus = buildCommunityCorpus(communitySheets);
+          useCommunityQuoteRules = true;
+
+          if (rowSearch.citations.length > 0) {
+            writer.write({
+              type: "data-citations",
+              id: "citations",
+              data: { sources: rowSearch.citations },
+            } as Parameters<typeof writer.write>[0]);
+          }
+
+          trace.patchStep("community-row-search", {
+            status: "done",
+            detail: `${rowSearch.rows.length}건 원문 검색 완료`,
+          });
+        }
+
         trace.patchStep("context", { status: "done" });
 
         const ragFileIds = excelFilesResolved.map((file) => file.id);
-        const needRAG = !quantitativeQuery && uploads.communityRows > 0;
+        const ragKeywords =
+          communityIntent.keywords.length > 0
+            ? communityIntent.keywords
+            : extractKeywordsFromQuery(userQuery, collectKnownKeywordsFromData(communitySheets));
+
+        let needRAG = false;
+        if (uploads.communityRows > 0 && communityIntent.type !== "community_quote") {
+          if (communityIntent.type === "community_count") {
+            needRAG = false;
+          } else if (shouldUseSummaryRag(communityIntent)) {
+            needRAG = true;
+            useCommunitySummaryRules = true;
+          } else if (!quantitativeQuery) {
+            needRAG = true;
+          }
+        }
 
         if (needRAG) {
           trace.upsertStep({
             id: "rag",
-            label: "관련 데이터 검색 (RAG)",
+            label: "하이브리드 RAG 검색",
             status: "running",
-            detail: "질문을 임베딩해 관련 행을 찾는 중…",
+            detail: "임베딩 + 키워드 매칭으로 관련 청크 검색",
           });
           trace.setHeadline("질문과 관련된 데이터를 검색하고 있습니다…");
 
           await ensureFilesIndexed(excelFilesResolved);
 
-          const rag = await searchRelevantChunks(ragFileIds, userQuery);
+          const rag = await searchRelevantChunks(ragFileIds, userQuery, ragKeywords);
           dataContext = appendRAGContext(dataContext, rag.contextText, contextMeta, rag.chunks.length);
 
           if (rag.citations.length > 0) {
@@ -443,7 +667,7 @@ export async function POST(request: Request) {
             status: "done",
             detail:
               rag.chunks.length > 0
-                ? `${rag.chunks.length}건 관련 행 검색 완료`
+                ? `후보 ${rag.meta.candidateCount}건 → 필터 ${rag.meta.filteredCount}건 → 최종 ${rag.meta.finalCount}건 (top ${rag.meta.topScore.toFixed(3)})`
                 : "인덱스된 데이터 없음 — 업로드 후 인덱싱을 확인하세요",
           });
         } else {
@@ -451,7 +675,9 @@ export async function POST(request: Request) {
             id: "rag",
             label: "관련 데이터 검색 (RAG)",
             status: "done",
-            detail: quantitativeQuery
+            detail: isCommunityCountIntent(communityIntent.type)
+              ? "통계 질문 — 전수 집계 사용, RAG 생략"
+              : quantitativeQuery
               ? "통계·매출 질문 — RAG 생략 (전수 집계 사용)"
               : "텍스트 검색 대상 없음",
           });
@@ -467,15 +693,47 @@ export async function POST(request: Request) {
 
         const systemPrompt = buildSystemPrompt(excelFilesResolved, dataContext, contextMeta, {
           quantitativeQuery,
+          useCommunityCountRules,
+          useCommunityQuoteRules,
+          useCommunitySummaryRules,
         });
-        const result = streamText({
-          model,
-          system: systemPrompt,
-          messages: await convertToModelMessages(messages),
-        });
+        const modelMessages = await convertToModelMessages(messages);
 
-        writer.merge(result.toUIMessageStream());
-        const answerText = await result.text;
+        let answerText: string;
+
+        if (useCommunityQuoteRules) {
+          answerText = await generateWithQuoteVerification({
+            model,
+            systemPrompt,
+            modelMessages,
+            corpus: quoteCorpus,
+            trace,
+          });
+          writeAssistantText(writer, answerText);
+        } else {
+          const result = streamText({
+            model,
+            system: systemPrompt,
+            messages: modelMessages,
+          });
+
+          writer.merge(result.toUIMessageStream());
+          answerText = await result.text;
+
+          if (useCommunitySummaryRules && communitySheets.length > 0) {
+            const summaryCorpus = buildCommunityCorpus(communitySheets);
+            const verification = verifyQuotesInAnswer(answerText, summaryCorpus);
+            if (!verification.passed && verification.checkedQuotes.length > 0) {
+              trace.upsertStep({
+                id: "quote-verify",
+                label: "원문 인용 검증",
+                status: "done",
+                detail: `맥락 답변 인용 ${verification.failedQuotes.length}건 불일치 (스트리밍 완료 후 감지)`,
+              });
+            }
+          }
+        }
+
         trace.patchStep("answer", { status: "done" });
 
         const skipFollowUp =

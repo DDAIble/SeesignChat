@@ -5,7 +5,7 @@ import type { ExcelData, SheetData } from "./types";
 const QUANT_FULL_ROW_LIMIT = Number(process.env.QUANT_FULL_ROW_LIMIT) || 5_000;
 
 const QUANT_QUERY_RE =
-  /매출|수익|매출액|통계|추이|트렌드|건수|비율|합계|평균|중앙값|최대|최소|최고|최저|월별|연별|분기|증감|성장|전년|전월|yoy|mom|revenue|sales|amount|count|trend|stat|numeric|수치|그래프|차트|표로|집계|합산|총액|거래|판매|실적|성과|비교.*수|수치.*분석|분석.*수치/i;
+  /매출|수익|매출액|통계|추이|트렌드|건수|비율|합계|평균|중앙값|최대|최소|최고|최저|월별|연별|분기|증감|성장|전년|전월|yoy|mom|revenue|sales|amount|count|trend|stat|numeric|수치|그래프|차트|표로|집계|합산|총액|거래|판매|실적|성과|비교.*수|수치.*분석|분석.*수치|언급|일별|주별|날짜별|며칠|몇\s*건|몇건/i;
 
 const QUAL_QUERY_RE =
   /왜|이유|인사이트|감성|니즈|욕구|불만|칭찬|본문|여론|반응|키워드|주제|말해|언급|아바타|페르소나|limiting belief|desire|막힌|왜.*많/i;

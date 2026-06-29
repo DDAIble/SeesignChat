@@ -133,12 +133,37 @@ export function buildCommunityDatasetOverview(
 }
 
 const DEFAULT_CHARS_PER_ROW = 280;
+const DEFAULT_RAG_INDEX_BODY_CHARS = 600;
 
 function getCharsPerRow(): number {
   const env = process.env.COMMUNITY_MAP_CHARS_PER_ROW;
   if (!env) return DEFAULT_CHARS_PER_ROW;
   const parsed = Number(env);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CHARS_PER_ROW;
+}
+
+function getRagIndexBodyChars(): number {
+  const env = process.env.RAG_INDEX_BODY_CHARS;
+  if (!env) return DEFAULT_RAG_INDEX_BODY_CHARS;
+  const parsed = Number(env);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RAG_INDEX_BODY_CHARS;
+}
+
+export function formatRowForRAG(row: Record<string, unknown>, rowIndex: number): string {
+  const maxChars = getRagIndexBodyChars();
+  const title = getField(row, "제목");
+  const board = getField(row, "게시판");
+  const community = getField(row, "커뮤니티");
+  const date = getField(row, "게시날짜", "날짜", "작성일");
+  const body = truncateText(getField(row, "본문"), maxChars);
+  const keyword = getField(row, "키워드");
+
+  const meta = [date, community, board, keyword ? `키워드:${keyword}` : ""]
+    .filter(Boolean)
+    .join(" | ");
+
+  const line = `[${rowIndex}] ${meta ? `(${meta}) ` : ""}${title || "(제목 없음)"} — ${body || "(본문 없음)"}`;
+  return truncateText(line, maxChars + 120);
 }
 
 export function formatRowForBatch(row: Record<string, unknown>, rowIndex: number): string {

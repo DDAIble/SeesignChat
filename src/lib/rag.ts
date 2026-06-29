@@ -1,10 +1,14 @@
 import { chunkExcelFile, type ChunkDraft } from "./chunking";
 import type { CitationSource } from "./citations";
-import { embedQuery, embedTexts } from "./embeddings";
+import { embedTexts } from "./embeddings";
+import {
+  getDynamicTopK,
+  searchRelevantChunksHybrid,
+  type HybridSearchChunk,
+  type HybridSearchMeta,
+} from "./hybrid-search";
 import { getVectorStore, type DocumentChunk } from "./vector-store";
 import type { ExcelData } from "./types";
-
-const DEFAULT_TOP_K = 24;
 
 export interface IndexProgress {
   phase: "chunk" | "embed" | "done";
@@ -17,11 +21,6 @@ export interface IndexResult {
   fileId: string;
   chunkCount: number;
   skipped: boolean;
-}
-
-function getTopK(): number {
-  const parsed = Number(process.env.RAG_TOP_K);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_TOP_K;
 }
 
 export function isFileIndexed(fileId: string): boolean {
@@ -114,29 +113,39 @@ export async function indexExcelFile(
 }
 
 export interface RAGSearchResult {
-  chunks: Array<DocumentChunk & { score: number }>;
+  chunks: HybridSearchChunk[];
   contextText: string;
   citations: CitationSource[];
+  meta: HybridSearchMeta;
 }
 
 export async function searchRelevantChunks(
   fileIds: string[],
   query: string,
-  topK = getTopK()
+  keywords: string[] = []
 ): Promise<RAGSearchResult> {
   const store = getVectorStore();
   const indexedFileIds = fileIds.filter((id) => store.hasFile(id));
 
   if (!query.trim() || indexedFileIds.length === 0) {
-    return { chunks: [], contextText: "", citations: [] };
+    return {
+      chunks: [],
+      contextText: "",
+      citations: [],
+      meta: { candidateCount: 0, filteredCount: 0, finalCount: 0, topScore: 0 },
+    };
   }
 
-  const queryEmbedding = await embedQuery(query);
-  const chunks = store.search(queryEmbedding, indexedFileIds, topK);
-  const contextText = formatRAGContext(chunks);
-  const citations = buildCitationsFromChunks(chunks);
+  const hybrid = await searchRelevantChunksHybrid(indexedFileIds, query, keywords);
+  const contextText = formatRAGContext(hybrid.chunks, hybrid.meta);
+  const citations = buildCitationsFromChunks(hybrid.chunks);
 
-  return { chunks, contextText, citations };
+  return {
+    chunks: hybrid.chunks,
+    contextText,
+    citations,
+    meta: hybrid.meta,
+  };
 }
 
 export function buildCitationsFromChunks(
@@ -169,16 +178,20 @@ export function buildCitationsFromChunks(
   });
 }
 
-function formatRAGContext(chunks: Array<DocumentChunk & { score: number }>): string {
+function formatRAGContext(
+  chunks: HybridSearchChunk[],
+  meta: HybridSearchMeta
+): string {
   if (chunks.length === 0) {
     return "";
   }
 
   const parts = [
-    "### 질문 관련 검색 결과 (RAG)",
+    "### 질문 관련 검색 결과 (하이브리드 RAG)",
     "",
-    `질문과 의미적으로 가장 가까운 **${chunks.length}건**의 행을 임베딩 검색으로 찾았습니다.`,
-    "아래 내용만 근거로 답변하고, 검색 결과에 없는 내용은 추측하지 마세요.",
+    `- 벡터 유사도 + 키워드 매칭으로 **${chunks.length}건** 선별 (후보 ${meta.candidateCount}건 → 필터 ${meta.filteredCount}건)`,
+    "- 아래 청크 **텍스트만** 근거로 답변하세요. 없는 내용은 추측하지 마세요.",
+    "- **건수·통계·비율** 질문은 **커뮤니티 키워드 집계** 섹션만 사용하고, RAG 청크로 숫자를 만들지 마세요.",
     "",
   ];
 
@@ -187,8 +200,12 @@ function formatRAGContext(chunks: Array<DocumentChunk & { score: number }>): str
       chunk.rowEnd > chunk.rowIndex
         ? `행 ${chunk.rowIndex}~${chunk.rowEnd}`
         : `행 ${chunk.rowIndex}`;
+    const keywordNote =
+      chunk.matchedKeywords.length > 0
+        ? ` · 키워드: ${chunk.matchedKeywords.join(", ")}`
+        : "";
     parts.push(
-      `#### [${index + 1}] ${chunk.fileName} / ${chunk.sheetName} / ${rowLabel} (유사도 ${chunk.score.toFixed(3)})`,
+      `#### [${index + 1}] ${chunk.fileName} / ${chunk.sheetName} / ${rowLabel} (점수 ${chunk.score.toFixed(3)} · 벡터 ${chunk.vectorScore.toFixed(3)} · 키워드 ${chunk.keywordScore.toFixed(3)}${keywordNote})`,
       chunk.text,
       ""
     );
@@ -201,7 +218,11 @@ export function getIndexedFileSummary(fileIds: string[]): string {
   const store = getVectorStore();
   const lines = fileIds
     .filter((id) => store.hasFile(id))
-    .map((id) => `- 인덱싱됨: **${store.getFileChunkCount(id).toLocaleString()}청크**`);
+    .map((id) => {
+      const count = store.getFileChunkCount(id);
+      const topK = getDynamicTopK(count);
+      return `- 인덱싱됨: **${count.toLocaleString()}청크** (검색 topK 최대 ${topK})`;
+    });
 
   if (lines.length === 0) {
     return "⚠️ 아직 임베딩 인덱스가 없습니다. 파일 업로드 후 인덱싱이 완료될 때까지 기다려 주세요.";
@@ -209,3 +230,5 @@ export function getIndexedFileSummary(fileIds: string[]): string {
 
   return lines.join("\n");
 }
+
+export type { ChunkDraft };
