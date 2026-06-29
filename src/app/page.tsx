@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { ArrowLeft, ArrowRight, Database } from "lucide-react";
+import { ArrowLeft, ArrowRight, CircleHelp, Database } from "lucide-react";
 import ExcelUploader from "@/components/ExcelUploader";
 import DataPreview from "@/components/DataPreview";
 import ChatInterface from "@/components/ChatInterface";
@@ -47,12 +47,14 @@ export default function Home() {
   const aibleBoxUrl = process.env.NEXT_PUBLIC_AIBLE_BOX_URL ?? "/";
   const seesignAdminUrl =
     process.env.NEXT_PUBLIC_SEESIGN_ADMIN_URL ?? "https://seesign-admin.digitalds.store/main";
+  const chatGuideUrl =
+    process.env.NEXT_PUBLIC_CHAT_GUIDE_URL ?? "https://seesign.mintlify.app/guide/chat/ready";
 
   return (
     <div className="flex h-screen flex-col bg-slate-50">
       <header className="shrink-0 border-b border-slate-200 bg-white px-6 py-4">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+          <div className="flex items-center gap-3 min-w-0">
             <Image
               src="/aible_logo.svg"
               alt="SEE:SIGN"
@@ -61,18 +63,31 @@ export default function Home() {
               priority
               className="h-9 w-auto"
             />
-            <div>
+            <div className="min-w-0">
               <h1 className="text-lg font-bold text-slate-900 leading-tight">AiBLE CHAT</h1>
               <p className="text-xs text-slate-500">데이터와 대화하세요.</p>
             </div>
           </div>
+
           <a
-            href={aibleBoxUrl}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700"
+            href={chatGuideUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-100"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            AiBle BOX
+            <CircleHelp className="h-4 w-4 shrink-0 text-emerald-600" />
+            <span className="whitespace-nowrap">AiBLE CHAT, 넌 뭘 할 수 있니?</span>
           </a>
+
+          <div className="flex justify-end">
+            <a
+              href={aibleBoxUrl}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              AiBle BOX
+            </a>
+          </div>
         </div>
       </header>
 
@@ -97,7 +112,7 @@ export default function Home() {
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 via-fuchsia-600 to-violet-700 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-violet-500/30 transition-all hover:from-violet-500 hover:via-fuchsia-500 hover:to-violet-600 hover:shadow-violet-500/45 active:scale-[0.98]"
             >
               <Database className="h-4 w-4 shrink-0" />
-              <span>SEE:SIGN에서 데이터 수집하러 가기</span>
+              <span>SEE:SIGN으로 데이터 수집하러 가기</span>
               <ArrowRight className="h-4 w-4 shrink-0" />
             </a>
             <p className="mt-1.5 text-center text-[11px] text-slate-400">
