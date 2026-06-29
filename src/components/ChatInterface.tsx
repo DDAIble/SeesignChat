@@ -29,7 +29,10 @@ function getMessageText(message: { parts: Array<{ type: string; text?: string }>
 }
 
 export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
+  const SCROLL_PIN_THRESHOLD_PX = 80;
   const [input, setInput] = useState("");
   const [analysisTrace, setAnalysisTrace] = useState<AnalysisTraceData | null>(null);
   const [citationsByMessageId, setCitationsByMessageId] = useState<Record<string, CitationSource[]>>({});
@@ -122,11 +125,40 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
     setFollowUpByMessageId({});
     turnCitationsRef.current = null;
     turnFollowUpRef.current = null;
+    shouldAutoScrollRef.current = true;
   };
 
+  const isNearBottom = useCallback((container: HTMLElement) => {
+    const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
+    return distance <= SCROLL_PIN_THRESHOLD_PX;
+  }, []);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (behavior === "auto") {
+      container.scrollTop = container.scrollHeight;
+      return;
+    }
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, []);
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, analysisTrace]);
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      shouldAutoScrollRef.current = isNearBottom(container);
+    };
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [isNearBottom]);
+
+  useEffect(() => {
+    if (!shouldAutoScrollRef.current) return;
+    scrollToBottom(isLoading ? "auto" : "smooth");
+  }, [messages, analysisTrace, followUpByMessageId, isLoading, scrollToBottom]);
 
   useEffect(() => {
     if (turnCitationsRef.current) {
@@ -143,6 +175,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
 
   const handleSend = (text: string) => {
     if (!text.trim() || excelFiles.length === 0 || isLoading || isLearning) return;
+    shouldAutoScrollRef.current = true;
     setAnalysisTrace({
       headline: "분석을 시작합니다…",
       steps: [{ id: "start", label: "요청 수신", status: "running" }],
@@ -191,7 +224,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && (
           <div className="space-y-4">
             <div className="flex gap-3">

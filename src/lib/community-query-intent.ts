@@ -9,12 +9,15 @@ export type CommunityQueryIntentType =
   | "community_count"
   | "community_count_and_summary"
   | "community_quote"
+  | "community_source_lookup"
   | "community_summary"
   | "other";
 
 export interface CommunityQueryIntent {
   type: CommunityQueryIntentType;
   keywords: string[];
+  /** 출처 추적 질문에서 검색할 구절 (긴 붙여넣기·쉼표 구분) */
+  searchPhrases: string[];
   labelFilter: string | null;
   dateFilter: string | null;
   limit: number | null;
@@ -27,6 +30,14 @@ const COUNT_RE =
 
 const QUOTE_RE =
   /원글|원문|인용|그대로|실제\s*문구|본문\s*보여|글\s*보여|게시글\s*보여|문구\s*보여|텍스트\s*보여|아래\s*게시글|아래\s*문장/i;
+
+const SOURCE_LOOKUP_RE =
+  /어느\s*파일|어디\s*(?:에\s*)?있|출처|근거\s*(?:게시|글|원문)|이\s*(?:원글|문장|표현|내용)/i;
+
+const SOURCE_LOOKUP_TAIL_RE =
+  /(?:이\s*)?(?:원글|원문|문장|표현|내용)(?:은|이)?\s*(?:어느|어디|무슨|몇\s*번).*?(?:파일|있|게시글|행)?\s*[?？]?\s*$/i;
+
+const MIN_SEARCH_PHRASE_LENGTH = 15;
 
 const SUMMARY_RE =
   /여론|주제|반응|니즈|욕구|불만|칭찬|맥락|요약|분석|인사이트|왜|느낌|경향|페르소나|아바타|어때|어떤지|많아|많은지/i;
@@ -128,12 +139,52 @@ function extractLimit(query: string): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+/** 출처 추적 질문에서 검색할 긴 구절 추출 */
+export function extractSearchPhrases(query: string): string[] {
+  let text = query.trim();
+  text = text.replace(SOURCE_LOOKUP_TAIL_RE, "").trim();
+  text = text.replace(
+    /(?:어느|어디)\s*(?:파일|게시글|행|시트|시트명).*$/i,
+    ""
+  ).trim();
+
+  const phrases: string[] = [];
+
+  const commaParts = text.split(/[,，]/).map((p) => p.trim()).filter(Boolean);
+  if (commaParts.length > 1) {
+    for (const part of commaParts) {
+      if (part.length >= MIN_SEARCH_PHRASE_LENGTH) phrases.push(part);
+    }
+  }
+
+  if (phrases.length === 0 && text.length >= MIN_SEARCH_PHRASE_LENGTH) {
+    phrases.push(text);
+  }
+
+  const seen = new Set<string>();
+  return phrases.filter((phrase) => {
+    const key = phrase.toLowerCase().replace(/\s+/g, " ");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isSourceLookupQuery(query: string): boolean {
+  if (!SOURCE_LOOKUP_RE.test(query)) return false;
+  if (LIMIT_RE.test(query)) return false;
+  const phrases = extractSearchPhrases(query);
+  const hasLongPaste = query.length > 80 || /,.{15,}/.test(query);
+  return phrases.length > 0 || hasLongPaste;
+}
+
 function baseIntent(
   partial: Omit<CommunityQueryIntent, "includeSummaryRag"> & { includeSummaryRag?: boolean }
 ): CommunityQueryIntent {
   return {
-    includeSummaryRag: partial.includeSummaryRag ?? false,
     ...partial,
+    searchPhrases: partial.searchPhrases ?? [],
+    includeSummaryRag: partial.includeSummaryRag ?? false,
   };
 }
 
@@ -145,6 +196,7 @@ export function detectCommunityQueryIntent(
   const defaultIntent: CommunityQueryIntent = {
     type: "other",
     keywords: [],
+    searchPhrases: [],
     labelFilter: null,
     dateFilter: null,
     limit: null,
@@ -164,11 +216,24 @@ export function detectCommunityQueryIntent(
   const isCount = COUNT_RE.test(query);
   const isSummary = SUMMARY_RE.test(query);
   const hasCountHint = keywords.length > 0 && /언급|몇|건|수|그래프|차트/.test(query);
+  const searchPhrases = extractSearchPhrases(query);
+
+  if (isSourceLookupQuery(query)) {
+    return baseIntent({
+      type: "community_source_lookup",
+      keywords,
+      searchPhrases,
+      labelFilter,
+      dateFilter,
+      limit: limit ?? 15,
+    });
+  }
 
   if (isQuote) {
     return baseIntent({
       type: "community_quote",
       keywords,
+      searchPhrases: [],
       labelFilter,
       dateFilter,
       limit: limit ?? 20,
@@ -180,6 +245,7 @@ export function detectCommunityQueryIntent(
     return baseIntent({
       type: "community_count_and_summary",
       keywords,
+      searchPhrases: [],
       labelFilter,
       dateFilter,
       limit: null,
@@ -191,6 +257,7 @@ export function detectCommunityQueryIntent(
     return baseIntent({
       type: "community_count",
       keywords,
+      searchPhrases: [],
       labelFilter,
       dateFilter,
       limit: null,
@@ -201,6 +268,7 @@ export function detectCommunityQueryIntent(
     return baseIntent({
       type: "community_summary",
       keywords,
+      searchPhrases: [],
       labelFilter,
       dateFilter,
       limit: null,
@@ -212,6 +280,7 @@ export function detectCommunityQueryIntent(
     return baseIntent({
       type: "community_count",
       keywords,
+      searchPhrases: [],
       labelFilter,
       dateFilter,
       limit: null,
@@ -222,6 +291,7 @@ export function detectCommunityQueryIntent(
     return baseIntent({
       type: "community_count",
       keywords,
+      searchPhrases: [],
       labelFilter,
       dateFilter,
       limit: null,

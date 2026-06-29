@@ -80,8 +80,59 @@ export const QUOTE_DISCLAIMER =
 export const VERBATIM_RETRY_SUFFIX = `
 
 ## 원문 인용 재시도 — 반드시 준수
+- **답변 본문은 한국어(한글)로만 작성**하세요. 베트남어·영어 등 다른 언어 본문 금지.
 - 이전 답변의 인용문 중 데이터 원문과 일치하지 않는 문장이 있었습니다.
 - **인용 가능 원문** 섹션에 있는 **제목·본문을 글자 그대로** 복사하세요.
 - 원문에 없는 문장은 생성·요약·의역하지 마세요.
 - 인용할 원문이 없으면 "해당 조건의 원문을 데이터에서 찾지 못했습니다"라고만 답하세요.
 `;
+
+const MIN_PARAPHRASE_LENGTH = 40;
+const EVIDENCE_MARKER_RE = /\(근거\s*:/;
+const AI_SUMMARY_MARKER_RE = /\(AI\s*요약\)/;
+
+export interface SummaryClaimVerificationResult {
+  passed: boolean;
+  missingEvidenceBullets: number;
+  missingAiSummaryLabels: number;
+  unverifiedQuotes: string[];
+}
+
+/** 요약 답변: 불릿마다 (근거: …) 표기·paraphrase (AI 요약) 라벨 검사 */
+export function verifySummaryClaims(answer: string, corpus: string[]): SummaryClaimVerificationResult {
+  const quoteResult = verifyQuotesInAnswer(answer, corpus);
+  const normalizedCorpus = normalizeQuoteText(corpus.join("\n")).toLowerCase();
+
+  const lines = answer.split("\n");
+  let missingEvidenceBullets = 0;
+  let missingAiSummaryLabels = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("-") && !trimmed.startsWith("*")) continue;
+    const content = trimmed.replace(/^[-*]\s+/, "");
+    if (content.length < MIN_PARAPHRASE_LENGTH) continue;
+    if (EVIDENCE_MARKER_RE.test(content)) continue;
+    if (AI_SUMMARY_MARKER_RE.test(content)) continue;
+
+    const normalized = normalizeQuoteText(content).toLowerCase();
+    const inCorpus = normalizedCorpus.includes(normalized);
+    if (!inCorpus) {
+      missingAiSummaryLabels++;
+    }
+    missingEvidenceBullets++;
+  }
+
+  return {
+    passed:
+      quoteResult.passed &&
+      missingEvidenceBullets === 0 &&
+      missingAiSummaryLabels === 0,
+    missingEvidenceBullets,
+    missingAiSummaryLabels,
+    unverifiedQuotes: quoteResult.failedQuotes,
+  };
+}
+
+export const SUMMARY_CLAIM_DISCLAIMER =
+  "> **안내**: 아래 답변 일부 불릿에 `(근거: …)` 또는 `(AI 요약)` 표기가 누락되었거나, 데이터 원문과 일치하지 않는 서술이 포함될 수 있습니다. 출처가 필요하면 해당 문장을 다시 질문해 주세요.\n\n";

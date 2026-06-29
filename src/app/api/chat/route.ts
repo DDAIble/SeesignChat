@@ -14,6 +14,7 @@ import { buildCommunityAggregationReport } from "@/lib/community-aggregation";
 import { collectCommunitySheets, sheetLooksLikeCommunityPosts } from "@/lib/community-analysis";
 import { collectKnownKeywordsFromData } from "@/lib/community-text-utils";
 import { detectCommunityQueryIntent, extractKeywordsFromQuery, isCommunityCountIntent, shouldUseSummaryRag } from "@/lib/community-query-intent";
+import { searchCommunityRowsByPhrases } from "@/lib/community-phrase-search";
 import {
   buildCommunityCorpus,
   searchCommunityRows,
@@ -21,6 +22,7 @@ import {
 import {
   appendCommunityAggregationContext,
   appendCommunityQuoteContext,
+  appendCommunitySourceLookupContext,
   appendQuantitativeContext,
   appendRAGContext,
   buildAIContext,
@@ -32,8 +34,10 @@ import {
 } from "@/lib/quantitative-analysis";
 import {
   QUOTE_DISCLAIMER,
+  SUMMARY_CLAIM_DISCLAIMER,
   VERBATIM_RETRY_SUFFIX,
   verifyQuotesInAnswer,
+  verifySummaryClaims,
 } from "@/lib/quote-verification";
 import { searchRelevantChunks } from "@/lib/rag";
 import { sheetLooksLikeQA } from "@/lib/qa-location";
@@ -93,10 +97,13 @@ function buildSystemPrompt(
     useCommunityCountRules: boolean;
     useCommunityQuoteRules: boolean;
     useCommunitySummaryRules: boolean;
+    useCommunitySourceLookupRules: boolean;
   }
 ): string {
   const dataScopeRule = contextMeta.communityAggregationUsed
     ? `- **커뮤니티 키워드 집계** 리포트에 **${contextMeta.aggregationRowCount.toLocaleString()}건** 매칭 결과가 포함되었습니다. 건수·일별·교차표·차트 답변은 **이 집계표 숫자만** 사용하세요. RAG·추정·샘플로 숫자를 만들지 마세요.`
+    : contextMeta.communitySourceLookupMode
+    ? `- **출처 추적 검색** 섹션에 전수 스캔 결과가 포함되었습니다. exact/similar 매칭 게시글만 근거로 출처를 안내하세요.`
     : contextMeta.communityQuoteMode
     ? `- **인용 가능 원문** 섹션에 검색된 게시글만 인용하세요. 제목·본문을 **글자 그대로** 복사하세요.`
     : contextMeta.quantitativeMode
@@ -144,14 +151,39 @@ function buildSystemPrompt(
     ? `
 ## 커뮤니티 맥락·여론 요약 — 반드시 지킬 규칙
 - **하이브리드 RAG** 검색 결과 청크 **텍스트만** 근거로 주제·여론·반응을 서술하세요.
+- RAG 청크 헤더 \`#### [N] 파일명 / 시트명 / 행 X~Y\` 형식 — **각 불릿·소주제 끝**에 \`(근거: {파일명} / {시트} / 행 {N}~{M})\` 를 **반드시** 표기하세요.
+- 여러 청크 근거면 \`(근거: A.xlsx/Sheet1/행12, B.xlsx/Sheet1/행45~46)\` 처럼 나열하세요.
+- **paraphrase(요약) 문장**은 따옴표·인용 블록 없이 서술하되, 문장 끝에 \`(AI 요약)\` 과 \`(근거: …)\` 를 **함께** 붙이세요.
+- **절대 금지**: 여러 게시글을 합쳐 만든 문장을 원문 인용처럼 쓰기.
 - **건수·비율·순위 숫자를 생성하지 마세요.** 건수는 **커뮤니티 키워드 집계** 표만 사용하세요. 집계표가 없으면 "건수는 집계 불가"라고 답하세요.
-- RAG 청크에 없는 강사명·표현·사건을 만들지 마세요.
+- RAG 청크에 없는 강사명·표현·사건을 만들지 마세요 — 없으면 해당 불릿을 생략하세요.
 - "~하는 경향", "주요 불만" 등 **서술**은 가능하나, 따옴표·인용 블록은 청크 원문에 있는 문장만 사용하세요.
 - 집계표와 RAG가 함께 있으면: **숫자=집계표**, **여론·맥락=RAG** 로 역할을 분리하세요.
 `
     : "";
 
+  const communitySourceLookupRules = options.useCommunitySourceLookupRules
+    ? `
+## 출처 추적 — 반드시 지킬 규칙
+- 사용자가 붙인 문장·구절의 **출처(파일/시트/행)** 를 찾는 질문입니다.
+- **### 출처 추적 검색** 섹션의 exact/similar 결과만 근거로 사용하세요.
+- **exact** (정확 일치): 파일명·시트명·행 번호 + 해당 본문 발췌를 보여주세요. \`(근거: {파일명} / {시트} / 행 {N})\` 표기.
+- **similar** (유사): "AI 요약과 가장 가까운 원문"임을 명시하고 \`(AI 요약)\` + 유사 게시글 위치·발췌 + \`(근거: …)\` 를 함께 안내하세요.
+- **검색 결과 0건**: "동일 원문은 데이터에 없습니다. 이전 답변의 해당 문장은 AI가 RAG 근거를 요약·합성한 paraphrase일 수 있습니다"라고 명확히 설명하세요.
+- **절대 금지**: "해당 조건의 원문을 데이터에서 찾지 못했습니다"만 단독으로 답하고 끝내기 — 유사글·요약 가능성을 함께 설명하세요.
+- verbatim 인용은 검색 결과 본문에 **글자 그대로** 있는 부분만 사용하세요.
+`
+    : "";
+
   return `당신은 SEE:SIGN CHAT의 데이터 분석 AI 어시스턴트입니다.
+
+## 출력 언어 — 최우선 (절대 준수)
+- **모든 답변 본문은 반드시 한국어(한글)** 로 작성하세요.
+- **절대 금지**: 베트남어, 영어, 중국어, 일본어 등 한국어가 아닌 언어로 서론·분석·표·불릿·제목을 작성하는 것
+- 업로드 데이터·RAG·뉴스 원문이 외국어여도 **해석·요약·분석은 한국어**로만 작성하세요.
+- 원문 인용(따옴표·인용 블록)만 해당 언어 그대로 허용합니다.
+- 로마 숫자·외국어 절 제목(I., II., Dưới, báo cáo 등) 금지 — \`##\`, \`###\` 한글 제목만 사용하세요.
+- chart JSON의 title·xAxis·yAxisLabel·series.name도 **한국어**로 작성하세요.
 
 사용자가 업로드한 엑셀 파일은 각종 서비스·플랫폼에서보낸 자료이며, 아래 유형이 혼재할 수 있습니다.
 - **정량적 데이터**: 매출, 통계, 수치, 평점, 건수, 날짜, 비율 등
@@ -167,10 +199,11 @@ ${quantitativeRules}
 ${communityCountRules}
 ${communityQuoteRules}
 ${communitySummaryRules}
+${communitySourceLookupRules}
 
 ## 정성 데이터 — 커뮤니티 게시글·텍스트
 - **'질문 관련 검색 결과 (하이브리드 RAG)'** 섹션이 있으면, 벡터+키워드로 선별한 청크입니다. **주제·여론 요약**에만 사용하세요. 건수·통계에는 사용하지 마세요.
-- **'커뮤니티 키워드 집계'** 또는 **'인용 가능 원문'** 섹션이 있으면 해당 섹션을 1순위 근거로 사용하세요.
+- **'커뮤니티 키워드 집계'**, **'인용 가능 원문'**, **'출처 추적 검색'** 섹션이 있으면 해당 섹션을 1순위 근거로 사용하세요.
 - 답변 본문에는 **[1], [2]** 같은 인용 번호를 **표기하지 마세요**. 출처는 화면 하단 목록으로 자동 표시됩니다.
 - 강조는 마크다운 **볼드**를 사용하세요. 예: **단 것**, **재미있는 사담**. 강조 기호와 글자 사이에 공백을 넣지 마세요 (잘못된 예: ** 단 것 **).
 - 데이터 개요의 게시판·라벨 분포는 참고용입니다. **키워드별·일별 건수**는 반드시 **커뮤니티 키워드 집계** 표를 사용하세요.
@@ -264,6 +297,7 @@ ${communitySummaryRules}
 
 ## 공통 규칙 — 마크다운 작성 (GFM → HTML 렌더링)
 ${dataScopeRule}
+- **답변 언어: 한국어(한글)만.** 데이터가 외국어여도 분석·설명은 한국어로 작성하세요.
 - 제공된 데이터만을 기반으로 정확하게 답변하세요. 데이터에 없는 내용은 추측하지 마세요.
 - 답변은 **유효한 GFM 마크다운**만 작성하세요. 앱이 HTML로 변환해 표시합니다.
 - **절대 금지**: \`\`\` 코드블록으로 답변을 감싸지 마세요. JSON·classification·summary 형식으로 답변하지 마세요.
@@ -342,7 +376,7 @@ ${dataScopeRule}
 **요약**: 2026~2027 수능 인강 시장 전반에 대한 수험생 반응 데이터입니다.
 
 - Q&A 핫스팟 순위표는 GFM **표**로 제시하세요
-- 한국어로 답변하세요.
+- **반드시 한국어(한글)로만** 답변하세요. 다른 언어로 본문을 작성하지 마세요.
 
 === 업로드된 데이터 ===
 ${dataContext}
@@ -533,6 +567,7 @@ export async function POST(request: Request) {
         let useCommunityCountRules = false;
         let useCommunityQuoteRules = false;
         let useCommunitySummaryRules = false;
+        let useCommunitySourceLookupRules = false;
 
         const quantReport = buildQuantitativeReport(excelFilesResolved);
         if (quantReport.sheetCount > 0) {
@@ -594,6 +629,44 @@ export async function POST(request: Request) {
           });
         }
 
+        if (communityIntent.type === "community_source_lookup" && communitySheets.length > 0) {
+          trace.upsertStep({
+            id: "community-phrase-search",
+            label: "출처 추적 검색",
+            status: "running",
+            detail: "붙여넣은 구절 기준 제목·본문 전수 스캔",
+          });
+
+          const phrases =
+            communityIntent.searchPhrases.length > 0
+              ? communityIntent.searchPhrases
+              : [userQuery];
+          const phraseSearch = searchCommunityRowsByPhrases(
+            communitySheets,
+            phrases,
+            communityIntent.limit ?? 15
+          );
+          dataContext = appendCommunitySourceLookupContext(
+            dataContext,
+            phraseSearch.contextText,
+            contextMeta
+          );
+          useCommunitySourceLookupRules = true;
+
+          if (phraseSearch.citations.length > 0) {
+            writer.write({
+              type: "data-citations",
+              id: "citations",
+              data: { sources: phraseSearch.citations },
+            } as Parameters<typeof writer.write>[0]);
+          }
+
+          trace.patchStep("community-phrase-search", {
+            status: "done",
+            detail: `${phraseSearch.matches.length}건 매칭 (구절 ${phraseSearch.phrasesSearched.length}개)`,
+          });
+        }
+
         if (communityIntent.type === "community_quote" && communitySheets.length > 0) {
           trace.upsertStep({
             id: "community-row-search",
@@ -630,7 +703,11 @@ export async function POST(request: Request) {
             : extractKeywordsFromQuery(userQuery, collectKnownKeywordsFromData(communitySheets));
 
         let needRAG = false;
-        if (uploads.communityRows > 0 && communityIntent.type !== "community_quote") {
+        if (
+          uploads.communityRows > 0 &&
+          communityIntent.type !== "community_quote" &&
+          communityIntent.type !== "community_source_lookup"
+        ) {
           if (communityIntent.type === "community_count") {
             needRAG = false;
           } else if (shouldUseSummaryRag(communityIntent)) {
@@ -696,6 +773,7 @@ export async function POST(request: Request) {
           useCommunityCountRules,
           useCommunityQuoteRules,
           useCommunitySummaryRules,
+          useCommunitySourceLookupRules,
         });
         const modelMessages = await convertToModelMessages(messages);
 
@@ -710,6 +788,14 @@ export async function POST(request: Request) {
             trace,
           });
           writeAssistantText(writer, answerText);
+        } else if (useCommunitySourceLookupRules) {
+          const result = streamText({
+            model,
+            system: systemPrompt,
+            messages: modelMessages,
+          });
+          writer.merge(result.toUIMessageStream());
+          answerText = await result.text;
         } else {
           const result = streamText({
             model,
@@ -722,14 +808,16 @@ export async function POST(request: Request) {
 
           if (useCommunitySummaryRules && communitySheets.length > 0) {
             const summaryCorpus = buildCommunityCorpus(communitySheets);
-            const verification = verifyQuotesInAnswer(answerText, summaryCorpus);
-            if (!verification.passed && verification.checkedQuotes.length > 0) {
+            const claimVerification = verifySummaryClaims(answerText, summaryCorpus);
+            if (!claimVerification.passed) {
               trace.upsertStep({
                 id: "quote-verify",
-                label: "원문 인용 검증",
+                label: "요약 근거 검증",
                 status: "done",
-                detail: `맥락 답변 인용 ${verification.failedQuotes.length}건 불일치 (스트리밍 완료 후 감지)`,
+                detail: `근거 미표기 ${claimVerification.missingEvidenceBullets}건 · AI요약 라벨 누락 ${claimVerification.missingAiSummaryLabels}건 · 인용 불일치 ${claimVerification.unverifiedQuotes.length}건`,
               });
+              answerText = SUMMARY_CLAIM_DISCLAIMER + answerText;
+              writeAssistantText(writer, SUMMARY_CLAIM_DISCLAIMER.trim());
             }
           }
         }

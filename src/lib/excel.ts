@@ -30,6 +30,7 @@ export interface AIContextMeta {
   quantitativeRows: number;
   communityAggregationUsed: boolean;
   communityQuoteMode: boolean;
+  communitySourceLookupMode: boolean;
   matchedKeywords: string[];
   aggregationRowCount: number;
 }
@@ -257,6 +258,7 @@ export function buildAIContext(
     quantitativeRows: 0,
     communityAggregationUsed: false,
     communityQuoteMode: false,
+    communitySourceLookupMode: false,
     matchedKeywords: [],
     aggregationRowCount: 0,
   };
@@ -368,4 +370,14 @@ export function appendCommunityQuoteContext(
   meta.communityQuoteMode = true;
   if (!quoteText.trim()) return baseContext;
   return `${baseContext}\n\n${quoteText}`;
+}
+
+export function appendCommunitySourceLookupContext(
+  baseContext: string,
+  lookupText: string,
+  meta: AIContextMeta
+): string {
+  meta.communitySourceLookupMode = true;
+  if (!lookupText.trim()) return baseContext;
+  return `${baseContext}\n\n${lookupText}`;
 }
