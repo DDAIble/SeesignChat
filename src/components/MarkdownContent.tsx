@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -10,7 +11,14 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { Components } from "react-markdown";
 import DataChart from "@/components/DataChart";
 import MermaidChart from "@/components/MermaidChart";
-import { stripCitationMarkers } from "@/lib/citations";
+import CitationDetailModal from "@/components/CitationDetailModal";
+import {
+  citationsByIndex,
+  filterBodyContentCitations,
+  preprocessEvidenceLinks,
+  stripCitationMarkers,
+  type CitationSource,
+} from "@/lib/citations";
 import { preprocessAssistantMarkdown } from "@/lib/markdown";
 import "katex/dist/katex.min.css";
 
@@ -29,7 +37,7 @@ function getCodeLanguage(className?: string): string | null {
   return match?.[1] ?? null;
 }
 
-const components: Components = {
+const baseComponents: Components = {
   h1: ({ children }) => (
     <h1 className="mb-4 mt-6 border-b border-slate-200 pb-2 text-xl font-bold text-slate-900 first:mt-0">
       {children}
@@ -122,34 +130,88 @@ const components: Components = {
     </td>
   ),
   hr: () => <hr className="my-6 border-slate-200" />,
-  a: ({ href, children }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-800"
-    >
-      {children}
-    </a>
-  ),
 };
 
 interface MarkdownContentProps {
   content: string;
+  citations?: CitationSource[];
 }
 
-export default function MarkdownContent({ content }: MarkdownContentProps) {
-  const prepared = stripCitationMarkers(preprocessAssistantMarkdown(content));
+export default function MarkdownContent({ content, citations = [] }: MarkdownContentProps) {
+  const [selectedCitation, setSelectedCitation] = useState<CitationSource | null>(null);
+
+  const bodyCitations = useMemo(
+    () => filterBodyContentCitations(citations),
+    [citations]
+  );
+
+  const citationMap = useMemo(
+    () => citationsByIndex(bodyCitations),
+    [bodyCitations]
+  );
+
+  const prepared = useMemo(() => {
+    const stripped = stripCitationMarkers(preprocessAssistantMarkdown(content));
+    return preprocessEvidenceLinks(stripped, bodyCitations);
+  }, [content, bodyCitations]);
+
+  const components = useMemo((): Components => {
+    return {
+      ...baseComponents,
+      a: ({ href, children }) => {
+        if (href?.startsWith("cite:")) {
+          const index = Number(href.slice(5));
+          const source = citationMap.get(index);
+          if (!source) {
+            return (
+              <span className="text-xs text-slate-400" title="본문 출처 없음">
+                [근거]
+              </span>
+            );
+          }
+          return (
+            <button
+              type="button"
+              onClick={() => setSelectedCitation(source)}
+              className="mx-0.5 inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-xs font-medium text-emerald-800 hover:border-emerald-300 hover:bg-emerald-100"
+              title={`${source.fileName} · ${source.sheetName} · 행 ${source.rowIndex}`}
+            >
+              {children ?? "근거"}
+            </button>
+          );
+        }
+
+        return (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-emerald-700 underline underline-offset-2 hover:text-emerald-800"
+          >
+            {children}
+          </a>
+        );
+      },
+    };
+  }, [citationMap]);
 
   return (
-    <div className="markdown-content text-[15px] [&_.katex]:text-[1em]">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
-        rehypePlugins={[rehypeKatex, rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
-        components={components}
-      >
-        {prepared}
-      </ReactMarkdown>
-    </div>
+    <>
+      <div className="markdown-content text-[15px] [&_.katex]:text-[1em]">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
+          rehypePlugins={[rehypeKatex, rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
+          components={components}
+        >
+          {prepared}
+        </ReactMarkdown>
+      </div>
+      {selectedCitation && (
+        <CitationDetailModal
+          source={selectedCitation}
+          onClose={() => setSelectedCitation(null)}
+        />
+      )}
+    </>
   );
 }

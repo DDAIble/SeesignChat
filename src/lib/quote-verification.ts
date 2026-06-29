@@ -88,7 +88,7 @@ export const VERBATIM_RETRY_SUFFIX = `
 `;
 
 const MIN_PARAPHRASE_LENGTH = 40;
-const EVIDENCE_MARKER_RE = /\(근거\s*:/;
+const EVIDENCE_MARKER_RE = /(\(근거\s*:|\[근거\s+\d+\])/;
 const AI_SUMMARY_MARKER_RE = /\(AI\s*요약\)/;
 
 export interface SummaryClaimVerificationResult {
@@ -135,4 +135,4 @@ export function verifySummaryClaims(answer: string, corpus: string[]): SummaryCl
 }
 
 export const SUMMARY_CLAIM_DISCLAIMER =
-  "> **안내**: 아래 답변 일부 불릿에 `(근거: …)` 또는 `(AI 요약)` 표기가 누락되었거나, 데이터 원문과 일치하지 않는 서술이 포함될 수 있습니다. 출처가 필요하면 해당 문장을 다시 질문해 주세요.\n\n";
+  "> **안내**: 아래 답변 일부 불릿에 `[근거 N]` 또는 `(AI 요약)` 표기가 누락되었거나, 데이터 원문과 일치하지 않는 서술이 포함될 수 있습니다. 출처가 필요하면 `[근거 N]` 링크 또는 해당 문장을 다시 질문해 주세요.\n\n";

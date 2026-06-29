@@ -277,7 +277,10 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
               {msg.role === "assistant" ? (
                 <>
                   <AnswerExportActions content={messageText} disabled={isStreamingThis}>
-                    <MarkdownContent content={messageText} />
+                    <MarkdownContent
+                      content={messageText}
+                      citations={citationsByMessageId[msg.id] ?? []}
+                    />
                   </AnswerExportActions>
                   <CitationListPanel
                     content={messageText}
