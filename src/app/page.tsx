@@ -112,7 +112,7 @@ export default function Home() {
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 via-fuchsia-600 to-violet-700 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-violet-500/30 transition-all hover:from-violet-500 hover:via-fuchsia-500 hover:to-violet-600 hover:shadow-violet-500/45 active:scale-[0.98]"
             >
               <Database className="h-4 w-4 shrink-0" />
-              <span>SEE:SIGN으로 데이터 수집하러 가기</span>
+              <span>SEE:SIGN에 데이터 수집하러 가기</span>
               <ArrowRight className="h-4 w-4 shrink-0" />
             </a>
             <p className="mt-1.5 text-center text-[11px] text-slate-400">
