@@ -108,17 +108,58 @@ export function filterCitationRows(
   return [];
 }
 
-/** 링크 타겟 → 파일·시트별 표시 세gment (모달용) */
+function mergeRowsIntoGroup(
+  grouped: Map<string, EvidenceDisplaySegment>,
+  source: CitationSource,
+  rows: CitationRowData[]
+): void {
+  if (rows.length === 0) return;
+  const key = `${source.fileName}\0${source.sheetName}`;
+  const existing = grouped.get(key);
+  if (existing) {
+    const seen = new Set(existing.rows.map((row) => row.rowIndex));
+    for (const row of rows) {
+      if (!seen.has(row.rowIndex)) existing.rows.push(row);
+    }
+    existing.rows.sort((a, b) => a.rowIndex - b.rowIndex);
+  } else {
+    grouped.set(key, {
+      fileName: source.fileName,
+      sheetName: source.sheetName,
+      rows: [...rows].sort((a, b) => a.rowIndex - b.rowIndex),
+    });
+  }
+}
+
+function findRowsInSource(source: CitationSource, rowNumbers: number[]): CitationRowData[] {
+  const found: CitationRowData[] = [];
+  const seen = new Set<number>();
+  for (const row of rowNumbers) {
+    if (seen.has(row)) continue;
+    const rows = filterCitationRows(source, [row]);
+    if (rows.length > 0) {
+      found.push(...rows);
+      seen.add(row);
+    }
+  }
+  return found;
+}
+
+/** 링크 타겟 → 파일·시트별 표시 segment (모달용) */
 export function resolveEvidenceDisplaySegments(
   target: EvidenceLinkTarget,
   citations: CitationSource[]
 ): EvidenceDisplaySegment[] {
   const bodyCitations = filterBodyContentCitations(citations);
   const grouped = new Map<string, EvidenceDisplaySegment>();
+  const unresolvedRows = new Set<number>();
 
   for (const ref of target.segments) {
     const source = getCitationByIndex(bodyCitations, ref.citationIndex);
-    if (!source) continue;
+    if (!source) {
+      for (const row of ref.rowNumbers) unresolvedRows.add(row);
+      continue;
+    }
 
     const validRows = ref.rowNumbers.filter(
       (row) =>
@@ -126,23 +167,24 @@ export function resolveEvidenceDisplaySegments(
         row <= source.rowEnd &&
         filterCitationRows(source, [row]).length > 0
     );
-    if (validRows.length === 0) continue;
+    if (validRows.length > 0) {
+      mergeRowsIntoGroup(grouped, source, filterCitationRows(source, validRows));
+    }
 
-    const rows = filterCitationRows(source, validRows);
-    const key = `${source.fileName}\0${source.sheetName}`;
-    const existing = grouped.get(key);
-    if (existing) {
-      const seen = new Set(existing.rows.map((row) => row.rowIndex));
-      for (const row of rows) {
-        if (!seen.has(row.rowIndex)) existing.rows.push(row);
+    for (const row of ref.rowNumbers) {
+      if (!validRows.includes(row)) unresolvedRows.add(row);
+    }
+  }
+
+  if (unresolvedRows.size > 0) {
+    for (const row of unresolvedRows) {
+      for (const source of bodyCitations) {
+        const rows = findRowsInSource(source, [row]);
+        if (rows.length > 0) {
+          mergeRowsIntoGroup(grouped, source, rows);
+          break;
+        }
       }
-      existing.rows.sort((a, b) => a.rowIndex - b.rowIndex);
-    } else {
-      grouped.set(key, {
-        fileName: source.fileName,
-        sheetName: source.sheetName,
-        rows: [...rows].sort((a, b) => a.rowIndex - b.rowIndex),
-      });
     }
   }
 
@@ -153,17 +195,26 @@ export function countEvidenceRows(segments: EvidenceDisplaySegment[]): number {
   return segments.reduce((sum, segment) => sum + segment.rows.length, 0);
 }
 
-/** 클릭 링크 라벨 — 행 번호 나열 없이 한 덩어리 */
+export function countEvidenceRowRefs(segments: EvidenceSegmentRef[]): number {
+  const rows = new Set<number>();
+  for (const ref of segments) {
+    for (const row of ref.rowNumbers) rows.add(row);
+  }
+  return rows.size;
+}
+
+/** 클릭 링크 라벨 — citations 미로드 시 href 기준 건수 */
+export function formatEvidenceLinkLabelFromRefs(segments: EvidenceSegmentRef[]): string {
+  const count = countEvidenceRowRefs(segments);
+  return count > 0 ? `출처 ${count}건` : "출처";
+}
+
+/** 클릭 링크 라벨 */
 export function formatEvidenceLinkLabel(
   displaySegments: EvidenceDisplaySegment[]
 ): string {
   const rowCount = countEvidenceRows(displaySegments);
-  if (rowCount === 0) return "근거 원문";
-  if (displaySegments.length === 1) {
-    const file = displaySegments[0].fileName.replace(/\.(xlsx|xls|csv)$/i, "");
-    return `근거 원문 (${file} · ${rowCount}건)`;
-  }
-  return `근거 원문 (${displaySegments.length}개 파일 · ${rowCount}건)`;
+  return rowCount > 0 ? `출처 ${rowCount}건` : "출처";
 }
 
 export function extractEvidenceIndices(content: string): Set<number> {
@@ -257,25 +308,32 @@ function buildLinkFromSegments(
   citations: CitationSource[]
 ): string {
   const merged = mergeSegmentRefs(segments);
-  const valid: EvidenceSegmentRef[] = [];
+  if (merged.length === 0) return "";
 
-  for (const ref of merged) {
-    const source = getCitationByIndex(filterBodyContentCitations(citations), ref.citationIndex);
-    if (!source) continue;
-    const rowNumbers = ref.rowNumbers.filter(
-      (row) =>
-        row >= source.rowIndex &&
-        row <= source.rowEnd &&
-        filterCitationRows(source, [row]).length > 0
-    );
-    if (rowNumbers.length > 0) valid.push({ citationIndex: ref.citationIndex, rowNumbers });
-  }
+  const href = buildEvidenceHref(merged);
+  const display =
+    citations.length > 0
+      ? resolveEvidenceDisplaySegments({ segments: merged }, citations)
+      : [];
+  const label =
+    display.length > 0
+      ? formatEvidenceLinkLabel(display)
+      : formatEvidenceLinkLabelFromRefs(merged);
+  return `[${label}](${href})`;
+}
 
-  if (valid.length === 0) return "";
-
-  const display = resolveEvidenceDisplaySegments({ segments: valid }, citations);
-  const label = formatEvidenceLinkLabel(display);
-  return `[${label}](${buildEvidenceHref(valid)})`;
+function normalizeExistingEvidenceLinks(
+  content: string,
+  citations: CitationSource[]
+): string {
+  return content.replace(
+    /\[([^\]]+)\]\(#evidence-([\d:,|]+)\)/gi,
+    (_match, _text, evidencePart) => {
+      const target = parseEvidenceHref(`#evidence-${evidencePart}`);
+      if (!target) return _match;
+      return buildLinkFromSegments(target.segments, citations);
+    }
+  );
 }
 
 export function stripChunkEvidenceText(content: string): string {
@@ -295,7 +353,7 @@ export function preprocessEvidenceLinks(
   content: string,
   citations: CitationSource[]
 ): string {
-  let result = content;
+  let result = normalizeExistingEvidenceLinks(content, citations);
 
   result = result.replace(
     /(?:\[근거\s*([^\]]+)\]\s*)+/gi,

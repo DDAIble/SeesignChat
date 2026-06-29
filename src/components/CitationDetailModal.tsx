@@ -48,6 +48,7 @@ export default function CitationDetailModal({
   onClose: () => void;
 }) {
   const totalRows = countEvidenceRows(segments);
+  const isEmpty = segments.length === 0 || totalRows === 0;
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -61,8 +62,6 @@ export default function CitationDetailModal({
       document.body.style.overflow = prevOverflow;
     };
   }, [onClose]);
-
-  if (segments.length === 0 || totalRows === 0) return null;
 
   return createPortal(
     <div
@@ -80,15 +79,17 @@ export default function CitationDetailModal({
       <div className="relative z-10 flex max-h-[min(85vh,40rem)] w-full max-w-5xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl">
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div className="min-w-0">
-            <p className="text-xs font-medium text-emerald-700">근거 원문</p>
+            <p className="text-xs font-medium text-emerald-700">출처</p>
             <h3 id="evidence-modal-title" className="mt-1 text-base font-semibold text-slate-900">
-              요약에 참조된 게시글 {totalRows}건
+              {isEmpty ? "원문을 찾지 못했습니다" : `요약에 참조된 게시글 ${totalRows}건`}
             </h3>
-            <p className="mt-1 text-xs text-slate-500">
-              {segments.length === 1
-                ? `${segments[0].fileName} · ${segments[0].sheetName}`
-                : `${segments.length}개 파일 · ${totalRows}행`}
-            </p>
+            {!isEmpty && (
+              <p className="mt-1 text-xs text-slate-500">
+                {segments.length === 1
+                  ? `${segments[0].fileName} · ${segments[0].sheetName}`
+                  : `${segments.length}개 파일 · ${totalRows}행`}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -100,20 +101,27 @@ export default function CitationDetailModal({
           </button>
         </div>
         <div className="space-y-6 overflow-y-auto px-5 py-4">
-          {segments.map((segment, index) => (
-            <div key={`${segment.fileName}-${segment.sheetName}`}>
-              {index > 0 && <hr className="mb-6 border-slate-200" />}
-              <div className="mb-3">
-                <p className="text-sm font-semibold text-slate-800">
-                  {segment.fileName.replace(/\.(xlsx|xls|csv)$/i, "")}
-                </p>
-                <p className="text-xs text-slate-500">
-                  {segment.sheetName} · {segment.rows.map((row) => row.rowIndex).join(", ")}행
-                </p>
+          {isEmpty ? (
+            <p className="text-sm text-slate-600">
+              참조 행 데이터를 불러오지 못했습니다. 답변이 완료된 후 다시 시도하거나, 해당 문장의
+              출처를 직접 질문해 주세요.
+            </p>
+          ) : (
+            segments.map((segment, index) => (
+              <div key={`${segment.fileName}-${segment.sheetName}`}>
+                {index > 0 && <hr className="mb-6 border-slate-200" />}
+                <div className="mb-3">
+                  <p className="text-sm font-semibold text-slate-800">
+                    {segment.fileName.replace(/\.(xlsx|xls|csv)$/i, "")}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {segment.sheetName} · {segment.rows.map((row) => row.rowIndex).join(", ")}행
+                  </p>
+                </div>
+                <CitationTable rows={segment.rows} />
               </div>
-              <CitationTable rows={segment.rows} />
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
     </div>,

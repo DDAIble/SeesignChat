@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -15,11 +15,13 @@ import CitationDetailModal from "@/components/CitationDetailModal";
 import {
   filterBodyContentCitations,
   formatEvidenceLinkLabel,
+  formatEvidenceLinkLabelFromRefs,
   parseEvidenceHref,
   preprocessEvidenceLinks,
   resolveEvidenceDisplaySegments,
   stripCitationMarkers,
   type EvidenceDisplaySegment,
+  type EvidenceLinkTarget,
   type CitationSource,
 } from "@/lib/citations";
 import { preprocessAssistantMarkdown } from "@/lib/markdown";
@@ -32,6 +34,10 @@ const sanitizeSchema = {
     ...defaultSchema.attributes,
     th: [...(defaultSchema.attributes?.th ?? []), "colSpan", "rowSpan", "align"],
     td: [...(defaultSchema.attributes?.td ?? []), "colSpan", "rowSpan", "align"],
+  },
+  protocols: {
+    ...(defaultSchema.protocols ?? {}),
+    href: [...(defaultSchema.protocols?.href ?? []), ""],
   },
 };
 
@@ -141,7 +147,8 @@ interface MarkdownContentProps {
 }
 
 export default function MarkdownContent({ content, citations = [] }: MarkdownContentProps) {
-  const [modalSegments, setModalSegments] = useState<EvidenceDisplaySegment[] | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalSegments, setModalSegments] = useState<EvidenceDisplaySegment[]>([]);
 
   const bodyCitations = useMemo(
     () => filterBodyContentCitations(citations),
@@ -153,6 +160,15 @@ export default function MarkdownContent({ content, citations = [] }: MarkdownCon
     return preprocessEvidenceLinks(stripped, bodyCitations);
   }, [content, bodyCitations]);
 
+  const openEvidenceModal = useCallback(
+    (target: EvidenceLinkTarget) => {
+      const segments = resolveEvidenceDisplaySegments(target, bodyCitations);
+      setModalSegments(segments);
+      setModalOpen(true);
+    },
+    [bodyCitations]
+  );
+
   const components = useMemo((): Components => {
     return {
       ...baseComponents,
@@ -160,15 +176,10 @@ export default function MarkdownContent({ content, citations = [] }: MarkdownCon
         const target = href ? parseEvidenceHref(href) : null;
         if (target) {
           const displaySegments = resolveEvidenceDisplaySegments(target, bodyCitations);
-          if (displaySegments.length === 0) {
-            return (
-              <span className="mx-0.5 text-xs text-slate-400" title="출처 로딩 중">
-                {children}
-              </span>
-            );
-          }
-
-          const label = formatEvidenceLinkLabel(displaySegments);
+          const label =
+            displaySegments.length > 0
+              ? formatEvidenceLinkLabel(displaySegments)
+              : formatEvidenceLinkLabelFromRefs(target.segments);
 
           return (
             <button
@@ -176,7 +187,7 @@ export default function MarkdownContent({ content, citations = [] }: MarkdownCon
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                setModalSegments(displaySegments);
+                openEvidenceModal(target);
               }}
               className="mx-0.5 inline-flex items-center rounded-md border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 hover:border-emerald-400 hover:bg-emerald-100 cursor-pointer"
               title="클릭하면 참조한 모든 행 본문 보기"
@@ -198,7 +209,7 @@ export default function MarkdownContent({ content, citations = [] }: MarkdownCon
         );
       },
     };
-  }, [bodyCitations]);
+  }, [bodyCitations, openEvidenceModal]);
 
   return (
     <>
@@ -211,10 +222,10 @@ export default function MarkdownContent({ content, citations = [] }: MarkdownCon
           {prepared}
         </ReactMarkdown>
       </div>
-      {modalSegments && modalSegments.length > 0 && (
+      {modalOpen && (
         <CitationDetailModal
           segments={modalSegments}
-          onClose={() => setModalSegments(null)}
+          onClose={() => setModalOpen(false)}
         />
       )}
     </>
