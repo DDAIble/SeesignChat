@@ -3,7 +3,11 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import type { CitationRowData, CitationSource } from "@/lib/citations";
+import {
+  countEvidenceRows,
+  type CitationRowData,
+  type EvidenceDisplaySegment,
+} from "@/lib/citations";
 
 function CitationTable({ rows }: { rows: CitationRowData[] }) {
   return (
@@ -37,28 +41,13 @@ function CitationTable({ rows }: { rows: CitationRowData[] }) {
 }
 
 export default function CitationDetailModal({
-  source,
+  segments,
   onClose,
 }: {
-  source: CitationSource;
+  segments: EvidenceDisplaySegment[];
   onClose: () => void;
 }) {
-  const rowLabel =
-    source.rowEnd > source.rowIndex
-      ? `행 ${source.rowIndex}~${source.rowEnd}`
-      : `행 ${source.rowIndex}`;
-  const tableRows =
-    source.rows.length > 0
-      ? source.rows.filter((row) => (row.body?.trim() ?? "").length > 0)
-      : [
-          {
-            rowIndex: source.rowIndex,
-            title: source.title,
-            body: source.body,
-            date: "-",
-            community: "-",
-          },
-        ];
+  const totalRows = countEvidenceRows(segments);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -73,12 +62,14 @@ export default function CitationDetailModal({
     };
   }, [onClose]);
 
+  if (segments.length === 0 || totalRows === 0) return null;
+
   return createPortal(
     <div
       className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      aria-labelledby={`citation-title-${source.index}`}
+      aria-labelledby="evidence-modal-title"
     >
       <button
         type="button"
@@ -90,15 +81,13 @@ export default function CitationDetailModal({
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div className="min-w-0">
             <p className="text-xs font-medium text-emerald-700">근거 원문</p>
-            <h3
-              id={`citation-title-${source.index}`}
-              className="mt-1 text-base font-semibold leading-snug text-slate-900"
-            >
-              {source.title || "(제목 없음)"}
+            <h3 id="evidence-modal-title" className="mt-1 text-base font-semibold text-slate-900">
+              요약에 참조된 게시글 {totalRows}건
             </h3>
             <p className="mt-1 text-xs text-slate-500">
-              {source.fileName} · {source.sheetName} · {rowLabel}
-              {tableRows.length > 1 ? ` · ${tableRows.length}행` : ""}
+              {segments.length === 1
+                ? `${segments[0].fileName} · ${segments[0].sheetName}`
+                : `${segments.length}개 파일 · ${totalRows}행`}
             </p>
           </div>
           <button
@@ -110,8 +99,21 @@ export default function CitationDetailModal({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="overflow-y-auto px-5 py-4">
-          <CitationTable rows={tableRows} />
+        <div className="space-y-6 overflow-y-auto px-5 py-4">
+          {segments.map((segment, index) => (
+            <div key={`${segment.fileName}-${segment.sheetName}`}>
+              {index > 0 && <hr className="mb-6 border-slate-200" />}
+              <div className="mb-3">
+                <p className="text-sm font-semibold text-slate-800">
+                  {segment.fileName.replace(/\.(xlsx|xls|csv)$/i, "")}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {segment.sheetName} · {segment.rows.map((row) => row.rowIndex).join(", ")}행
+                </p>
+              </div>
+              <CitationTable rows={segment.rows} />
+            </div>
+          ))}
         </div>
       </div>
     </div>,

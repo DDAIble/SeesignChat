@@ -88,7 +88,7 @@ export const VERBATIM_RETRY_SUFFIX = `
 `;
 
 const MIN_PARAPHRASE_LENGTH = 40;
-const EVIDENCE_MARKER_RE = /(\(근거\s*:|\[근거\s+\d+\])/;
+const EVIDENCE_MARKER_RE = /(\[근거\s*\d+\s*[:：]|(\[근거\s*\d+\]))/;
 const AI_SUMMARY_MARKER_RE = /\(AI\s*요약\)/;
 
 export interface SummaryClaimVerificationResult {

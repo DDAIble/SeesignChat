@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import CitationDetailModal from "@/components/CitationDetailModal";
 import {
   filterBodyContentCitations,
-  formatEvidenceLinkLabel,
+  filterCitationRows,
   resolveDisplayedCitations,
   type CitationSource,
 } from "@/lib/citations";
@@ -25,7 +25,7 @@ function previewText(source: CitationSource): string {
 
 export default function CitationListPanel({ content, citations }: CitationListPanelProps) {
   const [expanded, setExpanded] = useState(false);
-  const [selected, setSelected] = useState<CitationSource | null>(null);
+  const [selectedSource, setSelectedSource] = useState<CitationSource | null>(null);
 
   const bodyCitations = useMemo(
     () => filterBodyContentCitations(citations),
@@ -36,6 +36,21 @@ export default function CitationListPanel({ content, citations }: CitationListPa
     () => resolveDisplayedCitations(content, bodyCitations),
     [content, bodyCitations]
   );
+
+  const modalSegments = useMemo(() => {
+    if (!selectedSource) return [];
+    const rows =
+      selectedSource.rows.length > 0
+        ? selectedSource.rows.filter((row) => (row.body?.trim() ?? "").length > 0)
+        : filterCitationRows(selectedSource, [selectedSource.rowIndex]);
+    return [
+      {
+        fileName: selectedSource.fileName,
+        sheetName: selectedSource.sheetName,
+        rows,
+      },
+    ];
+  }, [selectedSource]);
 
   if (usedCitations.length === 0) return null;
 
@@ -65,11 +80,14 @@ export default function CitationListPanel({ content, citations }: CitationListPa
               <li key={source.index}>
                 <button
                   type="button"
-                  onClick={() => setSelected(source)}
+                  onClick={() => setSelectedSource(source)}
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left hover:border-emerald-300 hover:bg-emerald-50/50"
                 >
                   <p className="text-sm font-medium text-emerald-800">
-                    {formatEvidenceLinkLabel(source)}
+                    {source.fileName.replace(/\.(xlsx|xls|csv)$/i, "")} ·{" "}
+                    {source.rowEnd > source.rowIndex
+                      ? `${source.rowIndex}~${source.rowEnd}행`
+                      : `${source.rowIndex}행`}
                   </p>
                   <p className="mt-0.5 text-xs font-medium text-slate-900 line-clamp-2">
                     {source.title || "(제목 없음)"}
@@ -77,10 +95,9 @@ export default function CitationListPanel({ content, citations }: CitationListPa
                   {preview && (
                     <p className="mt-1 text-xs text-slate-500 line-clamp-2">{preview}</p>
                   )}
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    {source.fileName}
-                    {meta.length > 0 ? ` · ${meta.join(" · ")}` : ""}
-                  </p>
+                  {meta.length > 0 && (
+                    <p className="mt-1 text-[11px] text-slate-400">{meta.join(" · ")}</p>
+                  )}
                 </button>
               </li>
             );
@@ -88,8 +105,11 @@ export default function CitationListPanel({ content, citations }: CitationListPa
         </ul>
       )}
 
-      {selected && (
-        <CitationDetailModal source={selected} onClose={() => setSelected(null)} />
+      {selectedSource && modalSegments.length > 0 && (
+        <CitationDetailModal
+          segments={modalSegments}
+          onClose={() => setSelectedSource(null)}
+        />
       )}
     </div>
   );

@@ -31,7 +31,7 @@ function getMessageText(message: { parts: Array<{ type: string; text?: string }>
 export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const shouldAutoScrollRef = useRef(true);
+  const userPinnedRef = useRef(false);
   const SCROLL_PIN_THRESHOLD_PX = 80;
   const [input, setInput] = useState("");
   const [analysisTrace, setAnalysisTrace] = useState<AnalysisTraceData | null>(null);
@@ -125,7 +125,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
     setFollowUpByMessageId({});
     turnCitationsRef.current = null;
     turnFollowUpRef.current = null;
-    shouldAutoScrollRef.current = true;
+    userPinnedRef.current = false;
   };
 
   const isNearBottom = useCallback((container: HTMLElement) => {
@@ -133,32 +133,41 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
     return distance <= SCROLL_PIN_THRESHOLD_PX;
   }, []);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+  const scrollToBottomIfAllowed = useCallback(() => {
     const container = scrollContainerRef.current;
-    if (!container) return;
-    if (behavior === "auto") {
-      container.scrollTop = container.scrollHeight;
+    if (!container || userPinnedRef.current) return;
+    if (!isNearBottom(container)) {
+      userPinnedRef.current = true;
       return;
     }
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, []);
-
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-
-    const handleScroll = () => {
-      shouldAutoScrollRef.current = isNearBottom(container);
-    };
-
-    container.addEventListener("scroll", handleScroll, { passive: true });
-    return () => container.removeEventListener("scroll", handleScroll);
+    container.scrollTop = container.scrollHeight;
   }, [isNearBottom]);
 
   useEffect(() => {
-    if (!shouldAutoScrollRef.current) return;
-    scrollToBottom(isLoading ? "auto" : "smooth");
-  }, [messages, analysisTrace, followUpByMessageId, isLoading, scrollToBottom]);
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const pinIfScrolledUp = () => {
+      if (!isNearBottom(container)) {
+        userPinnedRef.current = true;
+      }
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) userPinnedRef.current = true;
+    };
+
+    container.addEventListener("scroll", pinIfScrolledUp, { passive: true });
+    container.addEventListener("wheel", handleWheel, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", pinIfScrolledUp);
+      container.removeEventListener("wheel", handleWheel);
+    };
+  }, [isNearBottom]);
+
+  useEffect(() => {
+    scrollToBottomIfAllowed();
+  }, [messages, analysisTrace, followUpByMessageId, scrollToBottomIfAllowed]);
 
   useEffect(() => {
     if (turnCitationsRef.current) {
@@ -175,7 +184,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
 
   const handleSend = (text: string) => {
     if (!text.trim() || excelFiles.length === 0 || isLoading || isLearning) return;
-    shouldAutoScrollRef.current = true;
+    userPinnedRef.current = false;
     setAnalysisTrace({
       headline: "분석을 시작합니다…",
       steps: [{ id: "start", label: "요청 수신", status: "running" }],
