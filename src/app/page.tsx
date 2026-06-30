@@ -1,16 +1,20 @@
 ﻿"use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Image from "next/image";
 import { ArrowLeft, ArrowRight, CircleHelp, Database } from "lucide-react";
 import ExcelUploader from "@/components/ExcelUploader";
 import DataPreview from "@/components/DataPreview";
 import ChatInterface from "@/components/ChatInterface";
-import { withBasePath } from "@/lib/base-path";
+import { deleteAllUploadData, deleteUploadData } from "@/lib/delete-upload-data";
+import { useCleanupUploadsOnLeave } from "@/lib/use-cleanup-uploads-on-leave";
 import type { ExcelData } from "@/lib/types";
 
 export default function Home() {
   const [excelFiles, setExcelFiles] = useState<ExcelData[]>([]);
+  const uploadedFileIds = useMemo(() => excelFiles.map((f) => f.id), [excelFiles]);
+
+  useCleanupUploadsOnLeave(uploadedFileIds);
 
   const handleAdd = (data: ExcelData) => {
     setExcelFiles((prev) => [...prev, data]);
@@ -23,24 +27,16 @@ export default function Home() {
   const handleRemove = async (id: string) => {
     setExcelFiles((prev) => prev.filter((f) => f.id !== id));
     try {
-      await fetch(withBasePath(`/api/embed?fileId=${encodeURIComponent(id)}`), {
-        method: "DELETE",
-      });
+      await deleteUploadData(id);
     } catch {
-      // UI에서는 이미 제거됨 — 인덱스 정리 실패는 무시
+      // UI에서는 이미 제거됨 — 인덱스·Blob 정리 실패는 무시
     }
   };
 
   const handleClearAll = async () => {
     const ids = excelFiles.map((f) => f.id);
     setExcelFiles([]);
-    await Promise.all(
-      ids.map((id) =>
-        fetch(withBasePath(`/api/embed?fileId=${encodeURIComponent(id)}`), {
-          method: "DELETE",
-        }).catch(() => undefined)
-      )
-    );
+    await deleteAllUploadData(ids);
   };
 
   // basePath 밖 플랫폼 루트 — Next.js Link가 /chat을 붙이므로 <a> 사용
