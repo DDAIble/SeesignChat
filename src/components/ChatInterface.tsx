@@ -31,7 +31,8 @@ function getMessageText(message: { parts: Array<{ type: string; text?: string }>
 export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const userPinnedRef = useRef(false);
+  const stickToBottomRef = useRef(true);
+  const programmaticScrollRef = useRef(false);
   const SCROLL_PIN_THRESHOLD_PX = 80;
   const [input, setInput] = useState("");
   const [analysisTrace, setAnalysisTrace] = useState<AnalysisTraceData | null>(null);
@@ -125,7 +126,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
     setFollowUpByMessageId({});
     turnCitationsRef.current = null;
     turnFollowUpRef.current = null;
-    userPinnedRef.current = false;
+    stickToBottomRef.current = true;
   };
 
   const isNearBottom = useCallback((container: HTMLElement) => {
@@ -134,30 +135,35 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
   }, []);
 
   const scrollToBottomIfAllowed = useCallback(() => {
-    const container = scrollContainerRef.current;
-    if (!container || userPinnedRef.current) return;
-    container.scrollTop = container.scrollHeight;
+    if (!stickToBottomRef.current) return;
+    requestAnimationFrame(() => {
+      const el = scrollContainerRef.current;
+      if (!el) return;
+      const maxTop = el.scrollHeight - el.clientHeight;
+      // 이미 바닥이면 스크롤하지 않음 (불필요한 프로그램 스크롤 플래그 방지)
+      if (Math.abs(el.scrollTop - maxTop) < 1) return;
+      programmaticScrollRef.current = true;
+      el.scrollTop = maxTop;
+    });
   }, []);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    const pinIfScrolledUp = () => {
-      if (!isNearBottom(container)) {
-        userPinnedRef.current = true;
+    const handleScroll = () => {
+      // 자동(프로그램) 스크롤이 만든 이벤트는 stick 상태를 바꾸지 않음
+      if (programmaticScrollRef.current) {
+        programmaticScrollRef.current = false;
+        return;
       }
+      // 사용자가 직접 스크롤했을 때만: 바닥 근처면 따라가기, 위로 올렸으면 그 위치 고정
+      stickToBottomRef.current = isNearBottom(container);
     };
 
-    const handleWheel = (event: WheelEvent) => {
-      if (event.deltaY < 0) userPinnedRef.current = true;
-    };
-
-    container.addEventListener("scroll", pinIfScrolledUp, { passive: true });
-    container.addEventListener("wheel", handleWheel, { passive: true });
+    container.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
-      container.removeEventListener("scroll", pinIfScrolledUp);
-      container.removeEventListener("wheel", handleWheel);
+      container.removeEventListener("scroll", handleScroll);
     };
   }, [isNearBottom]);
 
@@ -180,7 +186,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
 
   const handleSend = (text: string) => {
     if (!text.trim() || excelFiles.length === 0 || isLoading || isLearning) return;
-    userPinnedRef.current = false;
+    stickToBottomRef.current = true;
     setAnalysisTrace({
       headline: "분석을 시작합니다…",
       steps: [{ id: "start", label: "요청 수신", status: "running" }],

@@ -394,6 +394,127 @@ function normalizeVisualizationBlocks(text: string): string {
   return result.join("\n");
 }
 
+const CHART_SHAPE_HINT =
+  /"(?:series|xAxis|points|values|stages|dimensions|categories|xLabels|yLabels)"\s*:/;
+
+function looksLikeChartSpec(jsonText: string): boolean {
+  if (!/"type"\s*:/.test(jsonText)) return false;
+  if (!CHART_SHAPE_HINT.test(jsonText)) return false;
+  try {
+    const parsed = JSON.parse(jsonText) as { type?: unknown };
+    return Boolean(parsed) && typeof parsed === "object" && typeof parsed.type === "string";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * AI가 ```chart 펜스 없이 본문에 맨몸 JSON으로 차트 스펙을 출력하면 차트가 안 그려지고
+ * JSON이 그대로 노출됩니다. 차트 스펙으로 보이는 독립 JSON 객체를 ```chart 펜스로 감쌉니다.
+ */
+function wrapBareChartJson(text: string): string {
+  if (!text.includes("{")) return text;
+
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      inFence = !inFence;
+      out.push(line);
+      i += 1;
+      continue;
+    }
+
+    if (!inFence && trimmed.startsWith("{")) {
+      let depth = 0;
+      let started = false;
+      let j = i;
+      const buffer: string[] = [];
+
+      for (; j < lines.length; j++) {
+        const current = lines[j];
+        for (const ch of current) {
+          if (ch === "{") {
+            depth += 1;
+            started = true;
+          } else if (ch === "}") {
+            depth -= 1;
+          }
+        }
+        buffer.push(current);
+        if (started && depth <= 0) break;
+      }
+
+      if (started && depth <= 0) {
+        const jsonText = buffer.join("\n").trim();
+        if (looksLikeChartSpec(jsonText)) {
+          out.push("```chart");
+          out.push(jsonText);
+          out.push("```");
+          i = j + 1;
+          continue;
+        }
+      }
+    }
+
+    out.push(line);
+    i += 1;
+  }
+
+  return out.join("\n");
+}
+
+/**
+ * 제목(#)·구분선(---) 앞뒤에 빈 줄이 없으면 GFM이 블록으로 인식하지 못해 기호가 그대로 노출됩니다.
+ * 코드펜스 내부는 건드리지 않고 블록 요소 주변에 빈 줄을 보정합니다.
+ */
+function ensureBlockSpacing(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+
+    const isHeading = /^#{1,6}\s/.test(trimmed);
+    const isHr = /^---+$/.test(trimmed);
+    const prev = out.length > 0 ? out[out.length - 1].trim() : "";
+
+    if ((isHeading || isHr) && prev !== "") {
+      out.push("");
+    }
+
+    out.push(line);
+
+    if (isHeading) {
+      const next = i + 1 < lines.length ? lines[i + 1].trim() : "";
+      if (next !== "" && !next.startsWith("```")) {
+        out.push("");
+      }
+    }
+  }
+
+  return out.join("\n");
+}
+
 function finalizeMarkdown(text: string): string {
   let result = tightenEmphasisMarkers(text);
   result = cleanBrokenBold(result);
@@ -406,6 +527,7 @@ export function preprocessAssistantMarkdown(content: string): string {
 
   let text = content.replace(/\r\n/g, "\n");
   text = unwrapAssistantCodeFences(text);
+  text = wrapBareChartJson(text);
   text = normalizeAsterisks(text);
   text = unescapeMarkdown(text);
   text = replaceLatexSymbols(text);
@@ -424,6 +546,7 @@ export function preprocessAssistantMarkdown(content: string): string {
   text = normalizeKoreanBoldGlue(text);
   text = ensureListSpacing(text);
   text = normalizeHorizontalRules(text);
+  text = ensureBlockSpacing(text);
   text = normalizeMarkdownTables(text);
   text = normalizeVisualizationBlocks(text);
   text = finalizeMarkdown(text);
