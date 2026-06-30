@@ -14,6 +14,11 @@ function getAllowedHosts(): string[] {
 }
 
 export function middleware(request: NextRequest) {
+  // Vercel Cron 호출은 CRON_SECRET으로 자체 인증하므로 host 검사에서 제외
+  if (request.nextUrl.pathname.includes("/api/cron/")) {
+    return NextResponse.next();
+  }
+
   const allowedHosts = getAllowedHosts();
   if (allowedHosts.length === 0) {
     return NextResponse.next();
