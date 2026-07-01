@@ -2,51 +2,92 @@ import { withBasePath } from "@/lib/base-path";
 import { consumeNdjsonStream } from "@/lib/ndjson-stream";
 import { progressFromServerEvent } from "@/lib/learning-progress";
 import { readJsonResponse } from "@/lib/fetch-json";
+import { parseExcelBuffer } from "@/lib/parse-excel";
+import {
+  UploadFileError,
+  uploadSizeError,
+  validateParsedDataForUpload,
+  wrapUploadError,
+} from "@/lib/upload-errors";
+import type { UploadLimits } from "@/lib/upload-limits";
 import type { ExcelData } from "@/lib/types";
 
-/** 데스크탑(엑셀 등)에서 파일을 열어둬 잠긴 경우 안내 문구 */
-const FILE_IN_USE_MESSAGE =
-  "현재 데스크탑(엑셀 등)에서 이 파일을 실행 중인 것 같습니다. 실행 중인 파일을 닫은 뒤 다시 업로드해 주세요.";
+/** Vercel 서버리스 요청 본문 한도(~4.5MB) — 이보다 크면 브라우저에서 파싱 후 청크 전송 */
+const VERCEL_SAFE_UPLOAD_BYTES = 3.5 * 1024 * 1024;
+const ROWS_PER_CHUNK = 200;
 
-export async function uploadAndIndexFile(
-  file: File,
-  onAdd: (data: ExcelData) => void,
-  onUpdate: (id: string, patch: Partial<ExcelData>) => void
-): Promise<void> {
-  // 업로드 전 파일을 먼저 읽어 잠김(다른 프로그램에서 사용 중)을 감지합니다.
-  // Windows에서 엑셀 등으로 파일을 열어두면 여기서 읽기가 실패하거나, 전송 중 fetch가 "Failed to fetch"로 끊깁니다.
-  let buffer: ArrayBuffer;
-  try {
-    buffer = await file.arrayBuffer();
-  } catch {
-    throw new Error(FILE_IN_USE_MESSAGE);
-  }
-
-  const formData = new FormData();
-  // 읽어둔 메모리 복사본을 전송해 전송 도중 파일 잠김으로 인한 오류를 방지합니다.
-  formData.append("file", new Blob([buffer], { type: file.type }), file.name);
-
-  let res: Response;
-  try {
-    res = await fetch(withBasePath("/api/upload"), {
-      method: "POST",
-      body: formData,
-    });
-  } catch {
-    // fetch가 TypeError("Failed to fetch")로 실패 — 파일 잠김 또는 네트워크 문제
-    throw new Error(FILE_IN_USE_MESSAGE);
-  }
-
-  const contentType = res.headers.get("content-type") ?? "";
-
+async function postUploadJson(body: Record<string, unknown>): Promise<void> {
+  const res = await fetch(withBasePath("/api/upload"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) {
     const json = await readJsonResponse<{ error?: string }>(res).catch(() => ({
       error: "업로드 실패",
     }));
     throw new Error(json.error || "업로드 실패");
   }
+}
 
-  // 게이트웨이 프록시가 content-type을 바꿀 수 있어 JSON이 아니면 NDJSON으로 처리
+async function uploadParsedInChunks(data: ExcelData): Promise<Response> {
+  await postUploadJson({
+    action: "prepare",
+    id: data.id,
+    fileName: data.fileName,
+    uploadedAt: data.uploadedAt,
+    sheets: data.sheets.map((sheet) => ({
+      name: sheet.name,
+      headers: sheet.headers,
+      rowCount: sheet.rowCount,
+    })),
+  });
+
+  for (const sheet of data.sheets) {
+    for (let offset = 0; offset < sheet.rows.length; offset += ROWS_PER_CHUNK) {
+      const rows = sheet.rows.slice(offset, offset + ROWS_PER_CHUNK);
+      await postUploadJson({
+        action: "chunk",
+        uploadId: data.id,
+        sheetName: sheet.name,
+        rows,
+      });
+    }
+  }
+
+  try {
+    return await fetch(withBasePath("/api/upload"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "complete", uploadId: data.id }),
+    });
+  } catch {
+    throw new UploadFileError(
+      data.fileName,
+      "locked",
+      "현재 데스크탑(엑셀 등)에서 이 파일을 실행 중이거나 네트워크가 끊긴 것 같습니다. 파일을 닫은 뒤 다시 업로드해 주세요."
+    );
+  }
+}
+
+async function consumeUploadStream(
+  res: Response,
+  fileName: string,
+  onAdd: (data: ExcelData) => void,
+  onUpdate: (id: string, patch: Partial<ExcelData>) => void
+): Promise<void> {
+  const contentType = res.headers.get("content-type") ?? "";
+
+  if (!res.ok) {
+    const json = await readJsonResponse<{ error?: string }>(res).catch(() => ({
+      error:
+        res.status === 413
+          ? "서버 전송 한도를 초과했습니다. 잠시 후 다시 시도해 주세요."
+          : "업로드 실패",
+    }));
+    throw new Error(json.error || "업로드 실패");
+  }
+
   const isNdjsonStream =
     contentType.includes("ndjson") || !contentType.includes("application/json");
 
@@ -60,26 +101,28 @@ export async function uploadAndIndexFile(
     return;
   }
 
-  let data: ExcelData | null = null;
-  let streamError: Error | null = null;
+  let uploadedData: ExcelData | null = null;
+  let uploadedFileId: string | null = null;
+  let failureMessage: string | null = null;
 
   await consumeNdjsonStream(res, (event) => {
     if (event.type === "error") {
-      streamError = new Error(String(event.message ?? "파일 학습에 실패했습니다."));
+      failureMessage = String(event.message ?? "파일 학습에 실패했습니다.");
       return;
     }
 
     if (event.type === "uploaded") {
-      data = event.data as ExcelData;
+      uploadedData = event.data as ExcelData;
+      uploadedFileId = uploadedData.id;
       onAdd({
-        ...data,
+        ...uploadedData,
         indexStatus: "indexing",
         indexProgress: { phase: "chunk", percent: 2 },
       });
       return;
     }
 
-    if (!data) return;
+    if (!uploadedData) return;
 
     if (event.type === "progress") {
       const mapped = progressFromServerEvent({
@@ -88,7 +131,7 @@ export async function uploadAndIndexFile(
         total: Number(event.total ?? 1),
         chunkCount: Number(event.chunkCount ?? 0),
       });
-      onUpdate(data.id, {
+      onUpdate(uploadedData.id, {
         indexStatus: "indexing",
         indexProgress: mapped,
       });
@@ -96,33 +139,90 @@ export async function uploadAndIndexFile(
     }
 
     if (event.type === "done") {
-      onUpdate(data.id, {
+      onUpdate(uploadedData.id, {
         indexStatus: "ready",
         indexedChunks: Number(event.chunkCount ?? 0),
         indexError: undefined,
         indexProgress: { phase: "done", percent: 100 },
       });
-      return;
-    }
-
-    if (event.type === "error") {
-      const message = String(event.message ?? "파일 학습에 실패했습니다.");
-      if (data) {
-        onUpdate(data.id, {
-          indexStatus: "error",
-          indexError: message,
-          indexProgress: undefined,
-        });
-      }
-      streamError = new Error(message);
     }
   });
 
-  if (streamError) {
-    throw streamError;
+  if (failureMessage) {
+    if (uploadedFileId) {
+      onUpdate(uploadedFileId, {
+        indexStatus: "error",
+        indexError: failureMessage,
+        indexProgress: undefined,
+      });
+    }
+    throw wrapUploadError(fileName, new Error(failureMessage));
+  }
+  if (!uploadedData) {
+    throw new UploadFileError(fileName, "server", "업로드 응답이 비어 있습니다.");
+  }
+}
+
+export async function uploadAndIndexFile(
+  file: File,
+  onAdd: (data: ExcelData) => void,
+  onUpdate: (id: string, patch: Partial<ExcelData>) => void,
+  limits: UploadLimits
+): Promise<void> {
+  if (file.size > limits.maxFileBytes) {
+    throw uploadSizeError(file.name, file.size, limits.maxFileBytes);
   }
 
-  if (!data) {
-    throw new Error("업로드 응답이 비어 있습니다.");
+  let buffer: ArrayBuffer;
+  try {
+    buffer = await file.arrayBuffer();
+  } catch {
+    throw new UploadFileError(
+      file.name,
+      "locked",
+      "현재 데스크탑(엑셀 등)에서 이 파일을 실행 중인 것 같습니다. 실행 중인 파일을 닫은 뒤 다시 업로드해 주세요."
+    );
+  }
+
+  try {
+    let res: Response;
+
+    if (file.size > VERCEL_SAFE_UPLOAD_BYTES) {
+      let data: ExcelData;
+      try {
+        data = parseExcelBuffer(buffer, file.name);
+      } catch {
+        throw new UploadFileError(
+          file.name,
+          "format",
+          "파일을 읽을 수 없습니다. 손상되었거나 지원하지 않는 형식일 수 있습니다."
+        );
+      }
+
+      const validationError = validateParsedDataForUpload(data, limits);
+      if (validationError) throw validationError;
+
+      res = await uploadParsedInChunks(data);
+    } else {
+      const formData = new FormData();
+      formData.append("file", new Blob([buffer], { type: file.type }), file.name);
+
+      try {
+        res = await fetch(withBasePath("/api/upload"), {
+          method: "POST",
+          body: formData,
+        });
+      } catch {
+        throw new UploadFileError(
+          file.name,
+          "locked",
+          "현재 데스크탑(엑셀 등)에서 이 파일을 실행 중이거나 네트워크가 끊긴 것 같습니다. 파일을 닫은 뒤 다시 업로드해 주세요."
+        );
+      }
+    }
+
+    await consumeUploadStream(res, file.name, onAdd, onUpdate);
+  } catch (error) {
+    throw wrapUploadError(file.name, error);
   }
 }

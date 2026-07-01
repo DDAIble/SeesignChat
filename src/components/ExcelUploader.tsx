@@ -4,14 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import { Upload, FileSpreadsheet, Loader2, X, Plus } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
 import { uploadAndIndexFile } from "@/lib/upload-and-index";
+import { formatMaxMb, uploadSizeError, wrapUploadError } from "@/lib/upload-errors";
 import type { ExcelData } from "@/lib/types";
 import type { UploadLimits } from "@/lib/upload-limits";
 
 const MAX_FILES = 5;
-const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const DEFAULT_LIMITS: UploadLimits = {
   maxTotalRows: 200_000,
-  maxQaIndexRows: 5000,
+  maxFileBytes: 20 * 1024 * 1024,
 };
 const VALID_EXTENSIONS = [".xlsx", ".xls", ".csv"];
 
@@ -38,7 +38,7 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
     void fetch(withBasePath("/api/upload/limits"))
       .then((res) => (res.ok ? res.json() : null))
       .then((data: UploadLimits | null) => {
-        if (data?.maxTotalRows && data?.maxQaIndexRows) setLimits(data);
+        if (data?.maxTotalRows && data?.maxFileBytes) setLimits(data);
       })
       .catch(() => undefined);
   }, []);
@@ -50,32 +50,40 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
       setError(null);
 
       const all = Array.from(fileList);
+      const failures: string[] = [];
+      const invalidExt = all.filter((file) => !hasValidExtension(file));
+      if (invalidExt.length > 0) {
+        for (const file of invalidExt) {
+          failures.push(`「${file.name}」 지원하지 않는 형식입니다. (.xlsx, .xls, .csv만 가능)`);
+        }
+      }
+
       const withValidExt = all.filter(hasValidExtension);
       if (withValidExt.length === 0) {
-        setError("지원 형식: .xlsx, .xls, .csv");
+        setError(failures.join("\n") || "지원 형식: .xlsx, .xls, .csv");
         return;
       }
 
-      const oversized = withValidExt.filter((file) => file.size > MAX_FILE_BYTES);
-      const selected = withValidExt.filter((file) => file.size <= MAX_FILE_BYTES);
-      if (selected.length === 0) {
-        const maxMb = Math.floor(MAX_FILE_BYTES / (1024 * 1024));
-        setError(`파일이 너무 큽니다. (최대 ${maxMb}MB)`);
-        return;
+      const oversized = withValidExt.filter((file) => file.size > limits.maxFileBytes);
+      const selected = withValidExt.filter((file) => file.size <= limits.maxFileBytes);
+      for (const file of oversized) {
+        failures.push(uploadSizeError(file.name, file.size, limits.maxFileBytes).message);
       }
-      if (oversized.length > 0) {
-        const maxMb = Math.floor(MAX_FILE_BYTES / (1024 * 1024));
-        setError(`일부 파일이 ${maxMb}MB를 초과해 제외되었습니다.`);
+
+      if (selected.length === 0) {
+        setError(failures.join("\n"));
+        return;
       }
 
       if (remainingSlots <= 0) {
-        setError(`최대 ${MAX_FILES}개까지 업로드할 수 있습니다.`);
+        failures.push(`최대 ${MAX_FILES}개까지 업로드할 수 있습니다.`);
+        setError(failures.join("\n"));
         return;
       }
 
       const toUpload = selected.slice(0, remainingSlots);
       if (selected.length > remainingSlots) {
-        setError(`최대 ${MAX_FILES}개까지 가능합니다. ${remainingSlots}개만 추가됩니다.`);
+        failures.push(`최대 ${MAX_FILES}개까지 가능합니다. ${remainingSlots}개만 추가됩니다.`);
       }
 
       setIsParsing(true);
@@ -83,19 +91,19 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
       try {
         for (const file of toUpload) {
           try {
-            await uploadAndIndexFile(file, onAdd, onUpdate);
+            await uploadAndIndexFile(file, onAdd, onUpdate, limits);
           } catch (err) {
-            const message = err instanceof Error ? err.message : "업로드 중 오류가 발생했습니다.";
-            setError(message);
+            failures.push(wrapUploadError(file.name, err).message);
           }
         }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "업로드 중 오류가 발생했습니다.");
+        if (failures.length > 0) {
+          setError(failures.join("\n"));
+        }
       } finally {
         setIsParsing(false);
       }
     },
-    [onAdd, onUpdate, remainingSlots]
+    [onAdd, onUpdate, remainingSlots, limits]
   );
 
   const onDrop = useCallback(
@@ -170,11 +178,7 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
       </p>
       <p className="mt-1 text-xs text-slate-500">
         통계·게시글·후기·Q&A 등 · 최대 {MAX_FILES}개 · 파일당 최대{" "}
-        {limits.maxTotalRows.toLocaleString()}행까지 분석
-      </p>
-      <p className="mt-1 text-[11px] leading-4 text-slate-400">
-        Q&A 파일은 {limits.maxQaIndexRows.toLocaleString()}행까지 의미검색 학습 · 초과 시 학습 생략
-        (핫스팟·통계 분석은 전체 행 기준)
+        {formatMaxMb(limits.maxFileBytes)} · {limits.maxTotalRows.toLocaleString()}행
       </p>
     </div>
   );
@@ -231,7 +235,7 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
 
       {dropZone}
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="whitespace-pre-line text-sm text-red-600">{error}</p>}
     </div>
   );
 }

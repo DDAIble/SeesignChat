@@ -1,5 +1,4 @@
-﻿import * as XLSX from "xlsx";
-import {
+﻿import {
   buildCommunityDatasetOverview,
   sheetLooksLikeCommunityPosts,
 } from "./community-analysis";
@@ -14,7 +13,10 @@ import {
   prioritizeRowsForAI,
   sheetLooksLikeQA,
 } from "./qa-location";
+import { parseExcelBuffer } from "./parse-excel";
 import type { ExcelData, SheetData } from "./types";
+
+export { parseExcelBuffer } from "./parse-excel";
 
 const DEFAULT_MAX_CONTEXT_CHARS = 600_000;
 const DEFAULT_MAX_BODY_CHARS = 2000;
@@ -146,37 +148,6 @@ function fitRowsToBudget(
 
   const columns = collectColumns(included, headers);
   return { table: rowsToTsv(included, columns), included: included.length };
-}
-
-export function parseExcelBuffer(buffer: ArrayBuffer, fileName: string): ExcelData {
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-
-  const sheets: SheetData[] = workbook.SheetNames.map((name) => {
-    const worksheet = workbook.Sheets[name];
-    const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
-      defval: "",
-      raw: false,
-    });
-
-    const headers =
-      jsonData.length > 0
-        ? Object.keys(jsonData[0])
-        : (XLSX.utils.sheet_to_json<string[]>(worksheet, { header: 1 })[0] as string[]) ?? [];
-
-    return {
-      name,
-      headers,
-      rows: jsonData,
-      rowCount: jsonData.length,
-    };
-  });
-
-  return {
-    id: crypto.randomUUID(),
-    fileName,
-    sheets,
-    uploadedAt: new Date().toISOString(),
-  };
 }
 
 function buildSingleFileContext(
