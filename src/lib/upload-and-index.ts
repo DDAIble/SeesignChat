@@ -9,11 +9,14 @@ import {
   validateParsedDataForUpload,
   wrapUploadError,
 } from "@/lib/upload-errors";
-import type { UploadLimits } from "@/lib/upload-limits";
+import {
+  getClientChunkUploadThresholdBytes,
+  type UploadLimits,
+} from "@/lib/upload-limits";
 import type { ExcelData } from "@/lib/types";
 
-/** Vercel 서버리스 요청 본문 한도(~4.5MB) — 이보다 크면 브라우저에서 파싱 후 청크 전송 */
-const VERCEL_SAFE_UPLOAD_BYTES = 3.5 * 1024 * 1024;
+/** Vercel API 요청 한도(4.5MB) 이하만 원본 파일을 직접 POST — 그 이상은 브라우저 파싱·청크 전송 */
+const CLIENT_CHUNK_THRESHOLD = getClientChunkUploadThresholdBytes();
 const ROWS_PER_CHUNK = 200;
 
 async function postUploadJson(body: Record<string, unknown>): Promise<void> {
@@ -187,7 +190,7 @@ export async function uploadAndIndexFile(
   try {
     let res: Response;
 
-    if (file.size > VERCEL_SAFE_UPLOAD_BYTES) {
+    if (file.size > CLIENT_CHUNK_THRESHOLD) {
       let data: ExcelData;
       try {
         data = parseExcelBuffer(buffer, file.name);
@@ -199,7 +202,7 @@ export async function uploadAndIndexFile(
         );
       }
 
-      const validationError = validateParsedDataForUpload(data, limits);
+      const validationError = validateParsedDataForUpload(data);
       if (validationError) throw validationError;
 
       res = await uploadParsedInChunks(data);

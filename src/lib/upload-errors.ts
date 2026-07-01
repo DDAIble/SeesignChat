@@ -1,4 +1,3 @@
-import type { UploadLimits } from "@/lib/upload-limits";
 import type { ExcelData } from "@/lib/types";
 import { validateParsedExcelData } from "@/lib/upload-validate";
 
@@ -32,7 +31,11 @@ export function formatFileSize(bytes: number): string {
 }
 
 export function formatMaxMb(bytes: number): string {
-  return `${Math.floor(bytes / (1024 * 1024))}MB`;
+  const mb = bytes / (1024 * 1024);
+  if (!Number.isInteger(mb)) {
+    return `${mb.toFixed(1)}MB`;
+  }
+  return `${mb}MB`;
 }
 
 export function uploadSizeError(
@@ -47,29 +50,10 @@ export function uploadSizeError(
   );
 }
 
-export function uploadRowCount(data: ExcelData): number {
-  return data.sheets.reduce((sum, sheet) => sum + sheet.rowCount, 0);
-}
-
-export function validateParsedDataForUpload(
-  data: ExcelData,
-  limits: Pick<UploadLimits, "maxTotalRows">
-): UploadFileError | null {
-  const totalRows = uploadRowCount(data);
-  if (totalRows > limits.maxTotalRows) {
-    return new UploadFileError(
-      data.fileName,
-      "rows",
-      `행 수 초과 (${totalRows.toLocaleString()}행 · 최대 ${limits.maxTotalRows.toLocaleString()}행)`
-    );
-  }
-
+export function validateParsedDataForUpload(data: ExcelData): UploadFileError | null {
   const serverMessage = validateParsedExcelData(data);
   if (!serverMessage) return null;
 
-  if (serverMessage.includes("행이 너무 많")) {
-    return new UploadFileError(data.fileName, "rows", serverMessage);
-  }
   if (serverMessage.includes("시트가 너무 많")) {
     return new UploadFileError(data.fileName, "sheets", serverMessage);
   }
@@ -95,8 +79,8 @@ export function wrapUploadError(fileName: string, error: unknown): UploadFileErr
   if (/읽을 수 없습니다|손상|형식/i.test(message)) {
     return new UploadFileError(fileName, "format", message.replace(/^「[^」]+」\s*/, ""));
   }
-  if (/행/i.test(message) && /많|초과|없습니다/.test(message)) {
-    return new UploadFileError(fileName, "rows", message.replace(/^「[^」]+」\s*/, ""));
+  if (/행이 없습니다/.test(message)) {
+    return new UploadFileError(fileName, "empty", message.replace(/^「[^」]+」\s*/, ""));
   }
   if (/용량|커서|413|MB/i.test(message)) {
     return new UploadFileError(fileName, "size", message.replace(/^「[^」]+」\s*/, ""));

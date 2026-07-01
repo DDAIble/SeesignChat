@@ -10,8 +10,8 @@ import type { UploadLimits } from "@/lib/upload-limits";
 
 const MAX_FILES = 5;
 const DEFAULT_LIMITS: UploadLimits = {
-  maxTotalRows: 200_000,
-  maxFileBytes: 20 * 1024 * 1024,
+  maxFileBytes: 50 * 1024 * 1024,
+  vercelRequestBodyLimitBytes: Math.floor(4.5 * 1024 * 1024),
 };
 const VALID_EXTENSIONS = [".xlsx", ".xls", ".csv"];
 
@@ -38,7 +38,9 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
     void fetch(withBasePath("/api/upload/limits"))
       .then((res) => (res.ok ? res.json() : null))
       .then((data: UploadLimits | null) => {
-        if (data?.maxTotalRows && data?.maxFileBytes) setLimits(data);
+        if (data?.maxFileBytes && data?.vercelRequestBodyLimitBytes) {
+          setLimits(data);
+        }
       })
       .catch(() => undefined);
   }, []);
@@ -178,7 +180,11 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
       </p>
       <p className="mt-1 text-xs text-slate-500">
         통계·게시글·후기·Q&A 등 · 최대 {MAX_FILES}개 · 파일당 최대{" "}
-        {formatMaxMb(limits.maxFileBytes)} · {limits.maxTotalRows.toLocaleString()}행
+        {formatMaxMb(limits.maxFileBytes)}
+      </p>
+      <p className="mt-1 text-[11px] leading-4 text-slate-400">
+        Vercel API 요청 한도 {formatMaxMb(limits.vercelRequestBodyLimitBytes)}/회 · 더 큰 파일은
+        브라우저에서 자동 분할 업로드
       </p>
     </div>
   );

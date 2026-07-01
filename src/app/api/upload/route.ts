@@ -8,16 +8,10 @@ import {
   finalizeUploadSession,
 } from "@/lib/upload-session";
 import { validateParsedExcelData } from "@/lib/upload-validate";
+import { getUploadMaxFileBytes } from "@/lib/upload-limits";
 import type { ExcelData } from "@/lib/types";
 
 export const maxDuration = 300;
-
-const DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
-
-function getPositiveEnvInt(name: string, fallback: number): number {
-  const parsed = Number(process.env[name]);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
 
 function createNdjsonStream(
   run: (send: (payload: Record<string, unknown>) => void) => Promise<void>
@@ -132,7 +126,7 @@ async function handleFormUpload(request: NextRequest): Promise<Response> {
     return Response.json({ error: "지원 형식: .xlsx, .xls, .csv" }, { status: 400 });
   }
 
-  const maxBytes = getPositiveEnvInt("UPLOAD_MAX_BYTES", DEFAULT_MAX_BYTES);
+  const maxBytes = getUploadMaxFileBytes();
   if (file.size > maxBytes) {
     const maxMb = Math.floor(maxBytes / (1024 * 1024));
     return Response.json({ error: `파일이 너무 큽니다. (최대 ${maxMb}MB)` }, { status: 413 });
