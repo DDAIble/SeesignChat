@@ -15,7 +15,9 @@ import FollowUpQuestions from "@/components/FollowUpQuestions";
 import AnswerExportActions from "@/components/AnswerExportActions";
 import { isFollowUpQuestionsData } from "@/lib/follow-up-questions";
 import { withBasePath } from "@/lib/base-path";
+import { trimMessagesForChatApi } from "@/lib/chat-api-messages";
 import type { ExcelData } from "@/lib/types";
+import type { UIMessage } from "ai";
 
 interface ChatInterfaceProps {
   excelFiles: ExcelData[];
@@ -53,11 +55,33 @@ export default function ChatInterface({
     () =>
       new DefaultChatTransport({
         api: withBasePath("/api/chat"),
-        fetch: async (input, init) => {
-          const res = await fetch(input, init);
+        fetch: async (url, init) => {
+          let nextInit = init;
+          if (init?.body && typeof init.body === "string") {
+            try {
+              const parsed = JSON.parse(init.body) as {
+                messages?: UIMessage[];
+                fileIds?: string[];
+              };
+              if (Array.isArray(parsed.messages)) {
+                const extra = { fileIds: parsed.fileIds ?? [] };
+                parsed.messages = trimMessagesForChatApi(parsed.messages, extra);
+                nextInit = { ...init, body: JSON.stringify(parsed) };
+              }
+            } catch {
+              // 본문 파싱 실패 시 원본 그대로 전송
+            }
+          }
+
+          const res = await fetch(url, nextInit);
           if (res.status === 413) {
+            const json = (await res
+              .clone()
+              .json()
+              .catch(() => ({}))) as { error?: string };
             throw new Error(
-              "요청 크기가 서버 한도를 초과했습니다. 대화를 새로 시작하거나 파일 수·용량을 줄여 주세요."
+              json.error ??
+                "요청이 너무 큽니다. 업로드 파일 수·용량을 줄이거나 잠시 후 다시 시도해 주세요. (화면의 대화 내용은 그대로 유지됩니다.)"
             );
           }
           return res;
