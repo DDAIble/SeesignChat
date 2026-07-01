@@ -470,6 +470,109 @@ function wrapBareChartJson(text: string): string {
   return out.join("\n");
 }
 
+function isTableRowLine(trimmed: string): boolean {
+  return trimmed.startsWith("|");
+}
+
+/** `| --- | --- |` 같은 표 구분선(정렬행)인지 판별 */
+function isTableDelimiterLine(trimmed: string): boolean {
+  if (!trimmed.includes("|") || !trimmed.includes("-")) return false;
+  return /^\|?[\s:|-]*-{2,}[\s:|-]*$/.test(trimmed);
+}
+
+/**
+ * 한 줄 안에 앞 텍스트와 붙어버린 제목(##~######)·구분선(---)을
+ * 독립된 줄로 분리하고 앞뒤 빈 줄을 넣습니다.
+ * 예) "…분류했습니다.[근거 70]### Group 1" → "…분류했습니다.[근거 70]" \n\n "### Group 1"
+ */
+function splitInlineHeadingsAndRules(line: string): string[] {
+  const trimmed = line.trim();
+  if (!trimmed) return [line];
+  if (isTableRowLine(trimmed)) return [line];
+  if (/^#{1,6}\s/.test(trimmed)) return [line];
+  if (/^-{3,}$/.test(trimmed)) return [line];
+
+  let work = line
+    // 텍스트### 제목 (해시 2개 이상) — 문장 중간 제목 분리
+    .replace(/([^\n#])[ \t]*(#{2,6}[ \t]+)/g, "$1\n$2")
+    // 인용 태그 뒤 단일 해시 제목 [근거 N]# 제목
+    .replace(/(\])[ \t]*(#{1,6}[ \t]+)/g, "$1\n$2");
+
+  // 줄 끝 구분선: "텍스트---" → "텍스트" \n "---" (표 구분선 오인 방지 위해 | 없는 줄만)
+  if (!line.includes("|")) {
+    work = work.replace(/([^\n\s-])[ \t]*(-{3,})[ \t]*$/g, "$1\n$2");
+  }
+
+  if (work === line) return [line];
+
+  const pieces = work.split("\n");
+  const out: string[] = [];
+  for (const piece of pieces) {
+    const pt = piece.trim();
+    const isBlock = /^#{1,6}\s/.test(pt) || /^-{3,}$/.test(pt);
+    if (isBlock && out.length > 0 && out[out.length - 1].trim() !== "") {
+      out.push("");
+    }
+    out.push(piece);
+    if (isBlock) out.push("");
+  }
+  return out;
+}
+
+/**
+ * 인라인으로 붙어버린 블록 요소(제목·구분선·표 헤더)를 각각 독립된 줄 + 빈 줄로 분리합니다.
+ * `[근거 N]` 마커가 블록 시작에 붙어 GFM 파싱이 깨지는 문제를 결정적으로 해결합니다.
+ * 코드펜스 내부는 건드리지 않습니다.
+ */
+function separateInlineBlocks(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    if (inFence) {
+      out.push(line);
+      continue;
+    }
+
+    const nextTrimmed = i + 1 < lines.length ? lines[i + 1].trim() : "";
+    const nextIsDelimiter = isTableDelimiterLine(nextTrimmed);
+
+    // 표 헤더가 앞 텍스트에 붙은 경우 (다음 줄이 구분선) → 헤더를 분리
+    if (nextIsDelimiter && line.includes("|") && !isTableRowLine(trimmed)) {
+      const firstPipe = line.indexOf("|");
+      const prefix = line.slice(0, firstPipe).replace(/\s+$/, "");
+      const headerRow = line.slice(firstPipe).replace(/\s+$/, "");
+      if (prefix.trim()) {
+        for (const p of splitInlineHeadingsAndRules(prefix)) out.push(p);
+        if (out.length > 0 && out[out.length - 1].trim() !== "") out.push("");
+        out.push(headerRow);
+        continue;
+      }
+    }
+
+    // 표 헤더가 줄 시작이지만 앞에 빈 줄이 없는 경우 → 빈 줄 보정
+    if (nextIsDelimiter && isTableRowLine(trimmed)) {
+      const prevOut = out.length > 0 ? out[out.length - 1].trim() : "";
+      if (prevOut !== "" && !prevOut.startsWith("|")) out.push("");
+      out.push(line);
+      continue;
+    }
+
+    for (const p of splitInlineHeadingsAndRules(line)) out.push(p);
+  }
+
+  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
 /**
  * 제목(#)·구분선(---) 앞뒤에 빈 줄이 없으면 GFM이 블록으로 인식하지 못해 기호가 그대로 노출됩니다.
  * 코드펜스 내부는 건드리지 않고 블록 요소 주변에 빈 줄을 보정합니다.
@@ -546,6 +649,7 @@ export function preprocessAssistantMarkdown(content: string): string {
   text = normalizeKoreanBoldGlue(text);
   text = ensureListSpacing(text);
   text = normalizeHorizontalRules(text);
+  text = separateInlineBlocks(text);
   text = ensureBlockSpacing(text);
   text = normalizeMarkdownTables(text);
   text = normalizeVisualizationBlocks(text);
