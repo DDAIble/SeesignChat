@@ -50,6 +50,14 @@ export function uploadSizeError(
   );
 }
 
+export function uploadTooLargeError(fileName: string, maxBytes: number): UploadFileError {
+  return new UploadFileError(
+    fileName,
+    "size",
+    `파일이 너무 큽니다. 파일당 최대 ${formatMaxMb(maxBytes)}까지 업로드할 수 있습니다.`
+  );
+}
+
 export function validateParsedDataForUpload(data: ExcelData): UploadFileError | null {
   const serverMessage = validateParsedExcelData(data);
   if (!serverMessage) return null;
@@ -63,7 +71,11 @@ export function validateParsedDataForUpload(data: ExcelData): UploadFileError | 
   return new UploadFileError(data.fileName, "unknown", serverMessage);
 }
 
-export function wrapUploadError(fileName: string, error: unknown): UploadFileError {
+export function wrapUploadError(
+  fileName: string,
+  error: unknown,
+  maxFileBytes?: number
+): UploadFileError {
   if (error instanceof UploadFileError) return error;
 
   const message =
@@ -71,6 +83,10 @@ export function wrapUploadError(fileName: string, error: unknown): UploadFileErr
 
   if (message.startsWith(`「${fileName}」`)) {
     return new UploadFileError(fileName, "unknown", message.replace(`「${fileName}」 `, ""));
+  }
+
+  if (maxFileBytes && /세션.*만료|불완전|413|payload|전송 한도|too large/i.test(message)) {
+    return uploadTooLargeError(fileName, maxFileBytes);
   }
 
   if (/실행 중인 파일을 닫/i.test(message)) {
@@ -83,6 +99,7 @@ export function wrapUploadError(fileName: string, error: unknown): UploadFileErr
     return new UploadFileError(fileName, "empty", message.replace(/^「[^」]+」\s*/, ""));
   }
   if (/용량|커서|413|MB/i.test(message)) {
+    if (maxFileBytes) return uploadTooLargeError(fileName, maxFileBytes);
     return new UploadFileError(fileName, "size", message.replace(/^「[^」]+」\s*/, ""));
   }
 

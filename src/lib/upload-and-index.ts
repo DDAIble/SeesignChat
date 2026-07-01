@@ -2,93 +2,36 @@ import { withBasePath } from "@/lib/base-path";
 import { consumeNdjsonStream } from "@/lib/ndjson-stream";
 import { progressFromServerEvent } from "@/lib/learning-progress";
 import { readJsonResponse } from "@/lib/fetch-json";
-import { parseExcelBuffer } from "@/lib/parse-excel";
 import {
   UploadFileError,
   uploadSizeError,
-  validateParsedDataForUpload,
+  uploadTooLargeError,
   wrapUploadError,
 } from "@/lib/upload-errors";
-import {
-  getClientChunkUploadThresholdBytes,
-  type UploadLimits,
-} from "@/lib/upload-limits";
+import type { UploadLimits } from "@/lib/upload-limits";
 import type { ExcelData } from "@/lib/types";
-
-/** Vercel API 요청 한도(4.5MB) 이하만 원본 파일을 직접 POST — 그 이상은 브라우저 파싱·청크 전송 */
-const CLIENT_CHUNK_THRESHOLD = getClientChunkUploadThresholdBytes();
-const ROWS_PER_CHUNK = 200;
-
-async function postUploadJson(body: Record<string, unknown>): Promise<void> {
-  const res = await fetch(withBasePath("/api/upload"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const json = await readJsonResponse<{ error?: string }>(res).catch(() => ({
-      error: "업로드 실패",
-    }));
-    throw new Error(json.error || "업로드 실패");
-  }
-}
-
-async function uploadParsedInChunks(data: ExcelData): Promise<Response> {
-  await postUploadJson({
-    action: "prepare",
-    id: data.id,
-    fileName: data.fileName,
-    uploadedAt: data.uploadedAt,
-    sheets: data.sheets.map((sheet) => ({
-      name: sheet.name,
-      headers: sheet.headers,
-      rowCount: sheet.rowCount,
-    })),
-  });
-
-  for (const sheet of data.sheets) {
-    for (let offset = 0; offset < sheet.rows.length; offset += ROWS_PER_CHUNK) {
-      const rows = sheet.rows.slice(offset, offset + ROWS_PER_CHUNK);
-      await postUploadJson({
-        action: "chunk",
-        uploadId: data.id,
-        sheetName: sheet.name,
-        rows,
-      });
-    }
-  }
-
-  try {
-    return await fetch(withBasePath("/api/upload"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "complete", uploadId: data.id }),
-    });
-  } catch {
-    throw new UploadFileError(
-      data.fileName,
-      "locked",
-      "현재 데스크탑(엑셀 등)에서 이 파일을 실행 중이거나 네트워크가 끊긴 것 같습니다. 파일을 닫은 뒤 다시 업로드해 주세요."
-    );
-  }
-}
 
 async function consumeUploadStream(
   res: Response,
   fileName: string,
+  maxFileBytes: number,
   onAdd: (data: ExcelData) => void,
   onUpdate: (id: string, patch: Partial<ExcelData>) => void
 ): Promise<void> {
   const contentType = res.headers.get("content-type") ?? "";
 
   if (!res.ok) {
+    if (res.status === 413) {
+      throw uploadTooLargeError(fileName, maxFileBytes);
+    }
     const json = await readJsonResponse<{ error?: string }>(res).catch(() => ({
-      error:
-        res.status === 413
-          ? "서버 전송 한도를 초과했습니다. 잠시 후 다시 시도해 주세요."
-          : "업로드 실패",
+      error: "업로드 실패",
     }));
-    throw new Error(json.error || "업로드 실패");
+    const message = json.error || "업로드 실패";
+    if (/413|too large|payload|용량|커서/i.test(message)) {
+      throw uploadTooLargeError(fileName, maxFileBytes);
+    }
+    throw new Error(message);
   }
 
   const isNdjsonStream =
@@ -159,7 +102,7 @@ async function consumeUploadStream(
         indexProgress: undefined,
       });
     }
-    throw wrapUploadError(fileName, new Error(failureMessage));
+    throw wrapUploadError(fileName, new Error(failureMessage), maxFileBytes);
   }
   if (!uploadedData) {
     throw new UploadFileError(fileName, "server", "업로드 응답이 비어 있습니다.");
@@ -187,45 +130,16 @@ export async function uploadAndIndexFile(
     );
   }
 
+  const formData = new FormData();
+  formData.append("file", new Blob([buffer], { type: file.type }), file.name);
+
   try {
-    let res: Response;
-
-    if (file.size > CLIENT_CHUNK_THRESHOLD) {
-      let data: ExcelData;
-      try {
-        data = parseExcelBuffer(buffer, file.name);
-      } catch {
-        throw new UploadFileError(
-          file.name,
-          "format",
-          "파일을 읽을 수 없습니다. 손상되었거나 지원하지 않는 형식일 수 있습니다."
-        );
-      }
-
-      const validationError = validateParsedDataForUpload(data);
-      if (validationError) throw validationError;
-
-      res = await uploadParsedInChunks(data);
-    } else {
-      const formData = new FormData();
-      formData.append("file", new Blob([buffer], { type: file.type }), file.name);
-
-      try {
-        res = await fetch(withBasePath("/api/upload"), {
-          method: "POST",
-          body: formData,
-        });
-      } catch {
-        throw new UploadFileError(
-          file.name,
-          "locked",
-          "현재 데스크탑(엑셀 등)에서 이 파일을 실행 중이거나 네트워크가 끊긴 것 같습니다. 파일을 닫은 뒤 다시 업로드해 주세요."
-        );
-      }
-    }
-
-    await consumeUploadStream(res, file.name, onAdd, onUpdate);
+    const res = await fetch(withBasePath("/api/upload"), {
+      method: "POST",
+      body: formData,
+    });
+    await consumeUploadStream(res, file.name, limits.maxFileBytes, onAdd, onUpdate);
   } catch (error) {
-    throw wrapUploadError(file.name, error);
+    throw wrapUploadError(file.name, error, limits.maxFileBytes);
   }
 }
