@@ -5,6 +5,7 @@ import { Upload, FileSpreadsheet, Loader2, X, Plus } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
 import { uploadAndIndexFile } from "@/lib/upload-and-index";
 import { formatMaxMb, uploadSizeError, wrapUploadError } from "@/lib/upload-errors";
+import type { FileUploadActivity } from "@/lib/learning-progress";
 import type { ExcelData } from "@/lib/types";
 import type { UploadLimits } from "@/lib/upload-limits";
 
@@ -20,7 +21,7 @@ interface ExcelUploaderProps {
   onUpdate: (id: string, patch: Partial<ExcelData>) => void;
   onRemove: (id: string) => void;
   onClearAll?: () => void;
-  onUploadingChange?: (uploading: boolean) => void;
+  onUploadingChange?: (activity: FileUploadActivity) => void;
 }
 
 function hasValidExtension(file: File): boolean {
@@ -31,6 +32,10 @@ function hasValidExtension(file: File): boolean {
 export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClearAll, onUploadingChange }: ExcelUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
+  const [batchActivity, setBatchActivity] = useState<Pick<
+    FileUploadActivity,
+    "batchTotal" | "batchIndex" | "activeFileName"
+  > | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [limits, setLimits] = useState<UploadLimits>(DEFAULT_LIMITS);
 
@@ -46,11 +51,16 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
   }, []);
 
   useEffect(() => {
-    onUploadingChange?.(isParsing);
-  }, [isParsing, onUploadingChange]);
+    onUploadingChange?.({
+      active: isParsing,
+      batchTotal: batchActivity?.batchTotal,
+      batchIndex: batchActivity?.batchIndex,
+      activeFileName: batchActivity?.activeFileName,
+    });
+  }, [isParsing, batchActivity, onUploadingChange]);
 
   useEffect(() => {
-    return () => onUploadingChange?.(false);
+    return () => onUploadingChange?.({ active: false });
   }, [onUploadingChange]);
 
   const remainingSlots = MAX_FILES - files.length;
@@ -96,10 +106,17 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
         failures.push(`최대 ${MAX_FILES}개까지 가능합니다. ${remainingSlots}개만 추가됩니다.`);
       }
 
+      const sessionTotal = files.length + toUpload.length;
       setIsParsing(true);
 
       try {
-        for (const file of toUpload) {
+        for (let i = 0; i < toUpload.length; i++) {
+          const file = toUpload[i];
+          setBatchActivity({
+            batchTotal: sessionTotal,
+            batchIndex: files.length + i + 1,
+            activeFileName: file.name,
+          });
           try {
             await uploadAndIndexFile(file, onAdd, onUpdate, limits);
           } catch (err) {
@@ -110,6 +127,7 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
           setError(failures.join("\n"));
         }
       } finally {
+        setBatchActivity(null);
         setIsParsing(false);
       }
     },
@@ -136,7 +154,12 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
 
   function renderIndexStatus(file: ExcelData) {
     if (file.indexStatus === "indexing") {
-      return <span className="text-slate-500">학습 대기</span>;
+      const pct = file.indexProgress?.percent;
+      return (
+        <span className="text-slate-500">
+          학습 중{pct !== undefined ? ` · ${pct}%` : ""}
+        </span>
+      );
     }
     if (file.indexStatus === "error") {
       return <span className="text-red-600">학습 실패</span>;

@@ -90,7 +90,6 @@ export const VERBATIM_RETRY_SUFFIX = `
 const MIN_PARAPHRASE_LENGTH = 40;
 const EVIDENCE_MARKER_RE =
   /(\[근거\s*\d+\s*[:：]|(\[근거\s*\d+\])|#evidence-|출처\s*\d+\s*건|\[출처)/;
-const AI_SUMMARY_MARKER_RE = /\(AI\s*요약\)/;
 
 export interface SummaryClaimVerificationResult {
   passed: boolean;
@@ -99,14 +98,12 @@ export interface SummaryClaimVerificationResult {
   unverifiedQuotes: string[];
 }
 
-/** 요약 답변: 불릿마다 (근거: …) 표기·paraphrase (AI 요약) 라벨 검사 */
+/** 요약 답변: 불릿마다 근거 태그·출처 버튼 표기 검사 */
 export function verifySummaryClaims(answer: string, corpus: string[]): SummaryClaimVerificationResult {
   const quoteResult = verifyQuotesInAnswer(answer, corpus);
-  const normalizedCorpus = normalizeQuoteText(corpus.join("\n")).toLowerCase();
 
   const lines = answer.split("\n");
   let missingEvidenceBullets = 0;
-  let missingAiSummaryLabels = 0;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -114,26 +111,17 @@ export function verifySummaryClaims(answer: string, corpus: string[]): SummaryCl
     const content = trimmed.replace(/^[-*]\s+/, "");
     if (content.length < MIN_PARAPHRASE_LENGTH) continue;
     if (EVIDENCE_MARKER_RE.test(content)) continue;
-    if (AI_SUMMARY_MARKER_RE.test(content)) continue;
 
-    const normalized = normalizeQuoteText(content).toLowerCase();
-    const inCorpus = normalizedCorpus.includes(normalized);
-    if (!inCorpus) {
-      missingAiSummaryLabels++;
-    }
     missingEvidenceBullets++;
   }
 
   return {
-    passed:
-      quoteResult.passed &&
-      missingEvidenceBullets === 0 &&
-      missingAiSummaryLabels === 0,
+    passed: quoteResult.passed && missingEvidenceBullets === 0,
     missingEvidenceBullets,
-    missingAiSummaryLabels,
+    missingAiSummaryLabels: 0,
     unverifiedQuotes: quoteResult.failedQuotes,
   };
 }
 
 export const SUMMARY_CLAIM_DISCLAIMER =
-  "> **안내**: 아래 답변 일부 불릿에 `[근거 N]` 또는 `(AI 요약)` 표기가 누락되었거나, 데이터 원문과 일치하지 않는 서술이 포함될 수 있습니다. 출처가 필요하면 `[근거 N]` 링크 또는 해당 문장을 다시 질문해 주세요.\n\n";
+  "> **안내**: 아래 답변 일부 불릿에 `[근거 N]` 출처 표기가 누락되었거나, 데이터 원문과 일치하지 않는 서술이 포함될 수 있습니다. 출처가 필요하면 **[출처 N건]** 버튼 또는 해당 문장을 다시 질문해 주세요.\n\n";

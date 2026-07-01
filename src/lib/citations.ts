@@ -72,14 +72,21 @@ export function getCitationByIndex(
   return citations.find((source) => source.index === index);
 }
 
+/** href 본문의 공백·구분자 정규화 (모델이 2:4380 | 11:4221 처럼 쓰는 경우) */
+export function normalizeEvidenceHrefPart(raw: string): string {
+  return raw.replace(/\s+/g, "").replace(/\|+/g, "|").replace(/,+/g, ",");
+}
+
 /** #evidence-2:52,58|3:71 또는 행 없는 버킷 인용 #evidence-7 파싱 */
 export function parseEvidenceHref(href: string): EvidenceLinkTarget | null {
   const hash = href.startsWith("#") ? href.slice(1) : href;
-  const match = /^evidence-([\d:,|]+)$/.exec(hash);
-  if (!match) return null;
+  if (!hash.startsWith("evidence-")) return null;
+
+  const evidenceBody = normalizeEvidenceHrefPart(hash.replace(/^evidence-/, ""));
+  if (!evidenceBody) return null;
 
   const segments: EvidenceSegmentRef[] = [];
-  for (const part of match[1].split("|")) {
+  for (const part of evidenceBody.split("|")) {
     const segmentMatch = /^(\d{1,3})(?::([\d,]+))?$/.exec(part.trim());
     if (!segmentMatch) continue;
     const citationIndex = Number(segmentMatch[1]);
@@ -379,13 +386,19 @@ function normalizeExistingEvidenceLinks(
   citations: CitationSource[]
 ): string {
   return content.replace(
-    /\[([^\]]+)\]\(#evidence-([\d:,|]+)\)/gi,
+    /\[([^\]]+)\]\(#evidence-([^)]+)\)/gi,
     (_match, _text, evidencePart) => {
-      const target = parseEvidenceHref(`#evidence-${evidencePart}`);
+      const normalized = normalizeEvidenceHrefPart(evidencePart);
+      const target = parseEvidenceHref(`#evidence-${normalized}`);
       if (!target) return _match;
       return buildLinkFromSegments(target.segments, citations);
     }
   );
+}
+
+/** 답변 본문에서 (AI 요약) 라벨 제거 — 출처 버튼만 표시 */
+export function stripAiSummaryLabels(content: string): string {
+  return content.replace(/\s*\(AI\s*요약\)\s*/gi, " ");
 }
 
 export function stripChunkEvidenceText(content: string): string {
@@ -405,7 +418,8 @@ export function preprocessEvidenceLinks(
   content: string,
   citations: CitationSource[]
 ): string {
-  let result = normalizeExistingEvidenceLinks(content, citations);
+  let result = stripAiSummaryLabels(content);
+  result = normalizeExistingEvidenceLinks(result, citations);
 
   result = result.replace(
     /(?:\[근거\s*([^\]]+)\]\s*)+/gi,
@@ -422,12 +436,13 @@ export function preprocessEvidenceLinks(
   // 안전망: 마크다운 링크가 아닌 맨몸 #evidence-... (또는 (#evidence-...)) 평문 처리.
   // 정상 링크 `[..](#evidence-..)`는 `(` 앞 문자가 `]`이므로 건너뜀.
   result = result.replace(
-    /(\()?#evidence-([\d:,|]+)(\))?/g,
+    /(\()?#evidence-([^)\s]+(?:\s*\|\s*[^)\s]+)*)(\))?/g,
     (match, leftParen, evidencePart, _rightParen, offset: number, full: string) => {
       const charBefore = offset > 0 ? full[offset - 1] : "";
       if (leftParen === "(" && charBefore === "]") return match;
-      const target = parseEvidenceHref(`#evidence-${evidencePart}`);
-      if (!target) return "";
+      const normalized = normalizeEvidenceHrefPart(evidencePart);
+      const target = parseEvidenceHref(`#evidence-${normalized}`);
+      if (!target) return match;
       return buildLinkFromSegments(target.segments, citations);
     }
   );

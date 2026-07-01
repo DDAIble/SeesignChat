@@ -8,15 +8,16 @@ import DataPreview from "@/components/DataPreview";
 import ChatInterface from "@/components/ChatInterface";
 import { deleteAllUploadData, deleteUploadData } from "@/lib/delete-upload-data";
 import { useCleanupUploadsOnLeave } from "@/lib/use-cleanup-uploads-on-leave";
+import type { FileUploadActivity } from "@/lib/learning-progress";
 import type { ExcelData } from "@/lib/types";
 
 export default function Home() {
   const [excelFiles, setExcelFiles] = useState<ExcelData[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
+  const [uploadActivity, setUploadActivity] = useState<FileUploadActivity>({ active: false });
   const uploadedFileIds = useMemo(() => excelFiles.map((f) => f.id), [excelFiles]);
 
-  const handleUploadingChange = useCallback((uploading: boolean) => {
-    setIsUploading(uploading);
+  const handleUploadingChange = useCallback((activity: FileUploadActivity) => {
+    setUploadActivity(activity);
   }, []);
 
   useCleanupUploadsOnLeave(uploadedFileIds);
@@ -130,7 +131,7 @@ export default function Home() {
         </aside>
 
         <main className="flex flex-1 flex-col min-w-0 bg-white">
-          <ChatInterface excelFiles={excelFiles} isUploading={isUploading} />
+          <ChatInterface excelFiles={excelFiles} uploadActivity={uploadActivity} />
         </main>
       </div>
     </div>

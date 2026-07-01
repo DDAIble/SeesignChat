@@ -8,7 +8,7 @@ import AnalysisTracePanel from "@/components/AnalysisTracePanel";
 import MarkdownContent from "@/components/MarkdownContent";
 import CitationListPanel from "@/components/CitationListPanel";
 import LearningProgressBar from "@/components/LearningProgressBar";
-import { isFileProcessing, resolveLearningProgressDisplay } from "@/lib/learning-progress";
+import { isFileProcessing, resolveLearningProgressDisplay, type FileUploadActivity } from "@/lib/learning-progress";
 import { isAnalysisTraceData, type AnalysisTraceData } from "@/lib/analysis-trace";
 import { isCitationData, type CitationSource } from "@/lib/citations";
 import FollowUpQuestions from "@/components/FollowUpQuestions";
@@ -19,7 +19,7 @@ import type { ExcelData } from "@/lib/types";
 
 interface ChatInterfaceProps {
   excelFiles: ExcelData[];
-  isUploading?: boolean;
+  uploadActivity?: FileUploadActivity;
 }
 
 function getMessageText(message: { parts: Array<{ type: string; text?: string }> }): string {
@@ -29,7 +29,10 @@ function getMessageText(message: { parts: Array<{ type: string; text?: string }>
     .join("");
 }
 
-export default function ChatInterface({ excelFiles, isUploading = false }: ChatInterfaceProps) {
+export default function ChatInterface({
+  excelFiles,
+  uploadActivity = { active: false },
+}: ChatInterfaceProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(false);
@@ -126,10 +129,10 @@ export default function ChatInterface({ excelFiles, isUploading = false }: ChatI
   const isLoading = status === "submitted" || status === "streaming";
   isLoadingRef.current = isLoading;
   const learningProgress = useMemo(
-    () => resolveLearningProgressDisplay(excelFiles, isUploading),
-    [excelFiles, isUploading]
+    () => resolveLearningProgressDisplay(excelFiles, uploadActivity),
+    [excelFiles, uploadActivity]
   );
-  const isFileBusy = isFileProcessing(excelFiles, isUploading);
+  const isFileBusy = isFileProcessing(excelFiles, uploadActivity);
 
   const handleNewChat = () => {
     if (isLoading) stop();
