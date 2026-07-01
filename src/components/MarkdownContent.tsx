@@ -17,14 +17,12 @@ import {
   formatEvidenceLinkLabel,
   formatEvidenceLinkLabelFromRefs,
   parseEvidenceHref,
-  preprocessEvidenceLinks,
   resolveEvidenceDisplaySegments,
-  stripCitationMarkers,
   type EvidenceDisplaySegment,
   type EvidenceLinkTarget,
   type CitationSource,
 } from "@/lib/citations";
-import { preprocessAssistantMarkdown } from "@/lib/markdown";
+import { prepareAssistantMarkdownForRender } from "@/lib/markdown";
 import "katex/dist/katex.min.css";
 
 const sanitizeSchema = {
@@ -155,10 +153,10 @@ export default function MarkdownContent({ content, citations = [] }: MarkdownCon
     [citations]
   );
 
-  const prepared = useMemo(() => {
-    const stripped = stripCitationMarkers(preprocessAssistantMarkdown(content));
-    return preprocessEvidenceLinks(stripped, bodyCitations);
-  }, [content, bodyCitations]);
+  const prepared = useMemo(
+    () => prepareAssistantMarkdownForRender(content, bodyCitations),
+    [content, bodyCitations]
+  );
 
   const openEvidenceModal = useCallback(
     (target: EvidenceLinkTarget) => {

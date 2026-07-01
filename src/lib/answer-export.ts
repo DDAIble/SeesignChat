@@ -1,9 +1,8 @@
-import { stripCitationMarkers } from "@/lib/citations";
-import { preprocessAssistantMarkdown } from "@/lib/markdown";
+import { prepareAssistantMarkdownForRender } from "@/lib/markdown";
 
 /** 답변 마크다운을 클립보드용 평문으로 변환합니다. */
 export function answerToPlainText(markdown: string): string {
-  let text = stripCitationMarkers(preprocessAssistantMarkdown(markdown));
+  let text = prepareAssistantMarkdownForRender(markdown);
 
   text = text.replace(/```[^\n]*\n([\s\S]*?)```/g, "$1");
   text = text.replace(/^#{1,6}\s+/gm, "");

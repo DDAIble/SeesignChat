@@ -1,5 +1,6 @@
 /** AI 응답 마크다운을 렌더러가 파싱하기 쉽게 정규화합니다. */
 
+import { preprocessEvidenceLinks, stripCitationMarkers, type CitationSource } from "@/lib/citations";
 import { normalizeMarkdownTables } from "@/lib/markdown-tables";
 
 const UNICODE_ASTERISK = /[\uFF0A\u2217\u204E]/g;
@@ -497,8 +498,18 @@ function splitInlineBlockLine(line: string): string[] {
   let work = line
     // 문장 중간 제목 (해시 2개 이상)
     .replace(/([^\n#])[ \t]*(#{2,6}[ \t]+)/g, "$1\n$2")
-    // 인용 태그·링크 뒤 단일 해시 제목
-    .replace(/(\])[ \t]*(#{1,6}[ \t]+)/g, "$1\n$2")
+    // 인용 태그·[출처 N건](...) 링크 뒤 블록 요소
+    .replace(/(\))[ \t]*(#{1,6}[ \t]+)/g, "$1\n\n$2")
+    .replace(/(\))[ \t]*(\|)/g, "$1\n\n$2")
+    .replace(/(\))[ \t]*(-{3,})/g, "$1\n\n$2")
+    .replace(/(\))[ \t]*(\d+\.\s)/g, "$1\n\n$2")
+    .replace(/(출처\s+\d+건)[ \t]*(#{1,6}[ \t]+)/g, "$1\n\n$2")
+    .replace(/(출처\s+\d+건)[ \t]*(\|)/g, "$1\n\n$2")
+    .replace(/(출처\s+\d+건)[ \t]*(-{3,})/g, "$1\n\n$2")
+    .replace(/(출처\s+\d+건)[ \t]*(\d+\.\s)/g, "$1\n\n$2")
+    .replace(/(출처\s+\d+건)[ \t]*(-[ \t]+)/g, "$1\n\n$2")
+    // [근거 N] 태그 뒤 단일 해시 제목
+    .replace(/(\])[ \t]*(#{1,6}[ \t]+)/g, "$1\n\n$2")
     // 앞 텍스트에 붙은 구분선 (표 구분선 오인 방지: | 앞은 제외)
     .replace(/([^\n\s|-])[ \t]*(-{3,})(?=[ \t]|$)/g, "$1\n$2")
     // 구분선 뒤에 붙은 내용 분리 (--- ## 3 → --- \n ## 3)
@@ -640,6 +651,121 @@ function finalizeMarkdown(text: string): string {
   result = cleanBrokenBold(result);
   result = result.replace(/\*\*\s*\(/g, "** (");
   return ensureListSpacing(result);
+}
+
+/** 한글 어미·조사 바로 뒤에 붙은 숫자 분리: 약37,584,700 → 약 37,584,700 */
+function normalizeKoreanNumberGlue(text: string): string {
+  return text.replace(/([가-힣])(\d[\d,.%]*)/g, "$1 $2");
+}
+
+/** "1.영등포점"처럼 번호 목록이 붙은 경우 줄바꿈·공백 보정 */
+function normalizeGluedNumberedItems(text: string): string {
+  return text
+    .replace(/([.!?건%\d])(\d+\.\s*)([가-힣A-Za-z①②③④⑤⑥⑦⑧⑨⑩])/g, "$1\n\n$2 $3")
+    .replace(/(^|[^\n])(\d+)\.([가-힣A-Za-z①②③④⑤⑥⑦⑧⑨⑩])/gm, "$1$2. $3");
+}
+
+/**
+ * `이름 60%` 형태의 연속 줄을 pie 차트 JSON으로 변환 (모델이 ```chart 없이 텍스트로만 출력할 때)
+ */
+function wrapTextPercentChart(text: string): string {
+  if (/```chart/.test(text)) return text;
+
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+    const percentMatch = trimmed.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*%$/);
+
+    if (!percentMatch) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const labels: string[] = [];
+    const values: number[] = [];
+    let j = i;
+    while (j < lines.length) {
+      const m = lines[j].trim().match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*%$/);
+      if (!m) break;
+      labels.push(m[1].trim());
+      values.push(Number(m[2]));
+      j += 1;
+    }
+
+    if (labels.length < 2) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    let title = "";
+    if (out.length > 0) {
+      const prev = out[out.length - 1].trim();
+      const prevIsBlock =
+        prev.startsWith("#") ||
+        prev.startsWith("|") ||
+        prev.startsWith("-") ||
+        prev.startsWith("```") ||
+        prev === "---";
+      if (!prevIsBlock && prev.length > 0 && prev.length <= 80) {
+        title = out.pop()!.trim();
+      }
+    }
+
+    if (title) out.push(`### ${title}`);
+    out.push("```chart");
+    out.push(
+      JSON.stringify(
+        {
+          type: "pie",
+          title: title || "비율 분포",
+          xAxis: labels,
+          series: [{ name: "비율", data: values }],
+        },
+        null,
+        2
+      )
+    );
+    out.push("```");
+    i = j;
+  }
+
+  return out.join("\n");
+}
+
+/**
+ * `[근거 N]` → `[출처 N건](...)` 변환 **이후** 다시 블록을 분리합니다.
+ * 변환 전에는 `]###` 패턴만 잡히고, 변환 후 `출처 200건###`·`)###`가 남는 문제를 해결합니다.
+ */
+export function postprocessAfterEvidenceLinks(text: string): string {
+  let result = text;
+  result = normalizeKoreanNumberGlue(result);
+  result = normalizeGluedNumberedItems(result);
+  result = separateInlineBlocks(result);
+  result = ensureBlockSpacing(result);
+  result = normalizeMarkdownTables(result);
+  result = wrapBareChartJson(result);
+  result = wrapTextPercentChart(result);
+  result = finalizeMarkdown(result);
+  return result;
+}
+
+/** AI 원문 → GFM 마크다운 정규화 → 출처 링크 변환 → 렌더 직전 후처리 */
+export function prepareAssistantMarkdownForRender(
+  content: string,
+  citations: CitationSource[] = []
+): string {
+  if (!content) return "";
+
+  let text = preprocessAssistantMarkdown(content);
+  text = stripCitationMarkers(text);
+  text = preprocessEvidenceLinks(text, citations);
+  text = postprocessAfterEvidenceLinks(text);
+  return text;
 }
 
 export function preprocessAssistantMarkdown(content: string): string {

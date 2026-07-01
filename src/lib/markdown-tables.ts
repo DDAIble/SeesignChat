@@ -104,6 +104,15 @@ function normalizeMultilineRankLists(text: string): string {
   return result.join("\n");
 }
 
+/** `|열1|열2|` → `| 열1 | 열2 |` (파이프 직후 공백 없으면 GFM 표 파서가 실패할 수 있음) */
+function normalizeTableCellSpacing(line: string): string {
+  if (!line.includes("|")) return line;
+  return line
+    .replace(/\|([^\s|])/g, "| $1")
+    .replace(/([^\s|])\|/g, "$1 |")
+    .replace(/\|\s+\|/g, "| |");
+}
+
 /** 한 줄에 붙은 GFM 표 행을 줄바꿈으로 분리합니다. */
 function normalizeCollapsedMarkdownTables(text: string): string {
   let result = text;
@@ -122,6 +131,16 @@ function normalizeCollapsedMarkdownTables(text: string): string {
     /(\|[^\n]+?\|)\s+(\|(?!\s*[-:]))/g,
     "$1\n$2"
   );
+
+  result = result
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed.includes("|")) return line;
+      if (/^#{1,6}\s/.test(trimmed)) return line;
+      return normalizeTableCellSpacing(line);
+    })
+    .join("\n");
 
   return result;
 }
