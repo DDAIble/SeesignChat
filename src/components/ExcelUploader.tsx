@@ -7,6 +7,8 @@ import type { ExcelData } from "@/lib/types";
 
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
+/** 서버 검증 기본값(UPLOAD_MAX_TOTAL_ROWS)과 동일 — 분석 가능한 최대 행 수 안내용 */
+const MAX_ANALYZE_ROWS = 200_000;
 const VALID_EXTENSIONS = [".xlsx", ".xls", ".csv"];
 
 interface ExcelUploaderProps {
@@ -153,7 +155,10 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
             : "엑셀 파일을 드래그하거나 클릭"}
       </p>
       <p className="mt-1 text-xs text-slate-500">
-        통계·게시글·후기·Q&A 등 · 최대 {MAX_FILES}개
+        통계·게시글·후기·Q&A 등 · 최대 {MAX_FILES}개 · 파일당 최대 {MAX_ANALYZE_ROWS.toLocaleString()}행
+      </p>
+      <p className="mt-1 text-[11px] leading-4 text-slate-400">
+        대용량 파일은 의미검색 학습을 자동 생략하지만, 통계·Q&A 핫스팟 분석은 전체 행 기준으로 제공됩니다.
       </p>
     </div>
   );

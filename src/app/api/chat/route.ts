@@ -139,7 +139,7 @@ function buildSystemPrompt(
     : contextMeta.ragChunks > 0
     ? `- 질문과 관련된 **${contextMeta.ragChunks}건**의 행을 RAG(임베딩 검색)로 찾았습니다. **정성·본문 분석**에만 사용하세요. 건수·통계에는 사용하지 마세요.`
     : contextMeta.truncated
-      ? `- 상세 행 JSON은 토큰 한도로 **${contextMeta.includedRows.toLocaleString()}행**만 포함되었습니다. Q&A는 **인사이트 리포트(전체 ${contextMeta.scannedRows.toLocaleString()}행 기준)**를 우선 활용하세요.`
+      ? `- 상세 행 데이터(TSV)는 토큰 한도로 **${contextMeta.includedRows.toLocaleString()}행**만 포함되었습니다. Q&A는 **인사이트 리포트(전체 ${contextMeta.scannedRows.toLocaleString()}행 기준)**를 우선 활용하세요.`
       : `- 업로드된 **전체 ${contextMeta.scannedRows.toLocaleString()}행**을 서버에서 읽었습니다.`;
 
   const quantitativeRules =
@@ -259,7 +259,7 @@ ${communitySourceLookupRules}
 ### 핫스팟 건수 — 반드시 지킬 규칙
 - 순위·건수는 리포트 **순위표**의 \`**N건**\` 숫자만 인용하세요.
 - **'왜' 분석**은 **'질문 본문 종합'**에 수집된 해당 위치 **전체 본문**을 근거로 하세요. 질문 예시 2건만 보고 why를 추론하지 마세요.
-- 상세 행 JSON을 직접 세어 순위를 만들지 마세요 (토큰 한도로 일부 행만 포함될 수 있음).
+- 상세 행 데이터(TSV)를 직접 세어 순위를 만들지 마세요 (토큰 한도로 일부 행만 포함될 수 있음).
 - 동일 건수는 공동 순위로 표기하세요.
 
 ### 전용 컬럼 (제목·본문에서 위치 추측 금지)

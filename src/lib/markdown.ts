@@ -480,28 +480,31 @@ function isTableDelimiterLine(trimmed: string): boolean {
   return /^\|?[\s:|-]*-{2,}[\s:|-]*$/.test(trimmed);
 }
 
+/** ```lang 여는 펜스의 언어 토큰인지 판별 (닫는 펜스 뒤 잡음과 구분) */
+const FENCE_LANG_RE = /^[a-zA-Z][\w+#-]*$/;
+
 /**
- * 한 줄 안에 앞 텍스트와 붙어버린 제목(##~######)·구분선(---)을
- * 독립된 줄로 분리하고 앞뒤 빈 줄을 넣습니다.
- * 예) "…분류했습니다.[근거 70]### Group 1" → "…분류했습니다.[근거 70]" \n\n "### Group 1"
+ * 한 줄 안에 앞뒤 텍스트와 붙어버린 블록(제목 ##~######, 구분선 ---, 리스트 - )을
+ * 독립된 줄로 분리하고 필요한 곳에 빈 줄을 넣습니다.
+ * 예) "…분류했습니다.[근거 70]### Group 1" → "…[근거 70]" \n\n "### Group 1"
+ *     "…(#evidence-601)- **특징**" → "…(#evidence-601)" \n "- **특징**"
  */
-function splitInlineHeadingsAndRules(line: string): string[] {
+function splitInlineBlockLine(line: string): string[] {
   const trimmed = line.trim();
   if (!trimmed) return [line];
   if (isTableRowLine(trimmed)) return [line];
-  if (/^#{1,6}\s/.test(trimmed)) return [line];
-  if (/^-{3,}$/.test(trimmed)) return [line];
 
   let work = line
-    // 텍스트### 제목 (해시 2개 이상) — 문장 중간 제목 분리
+    // 문장 중간 제목 (해시 2개 이상)
     .replace(/([^\n#])[ \t]*(#{2,6}[ \t]+)/g, "$1\n$2")
-    // 인용 태그 뒤 단일 해시 제목 [근거 N]# 제목
-    .replace(/(\])[ \t]*(#{1,6}[ \t]+)/g, "$1\n$2");
-
-  // 줄 끝 구분선: "텍스트---" → "텍스트" \n "---" (표 구분선 오인 방지 위해 | 없는 줄만)
-  if (!line.includes("|")) {
-    work = work.replace(/([^\n\s-])[ \t]*(-{3,})[ \t]*$/g, "$1\n$2");
-  }
+    // 인용 태그·링크 뒤 단일 해시 제목
+    .replace(/(\])[ \t]*(#{1,6}[ \t]+)/g, "$1\n$2")
+    // 앞 텍스트에 붙은 구분선 (표 구분선 오인 방지: | 앞은 제외)
+    .replace(/([^\n\s|-])[ \t]*(-{3,})(?=[ \t]|$)/g, "$1\n$2")
+    // 구분선 뒤에 붙은 내용 분리 (--- ## 3 → --- \n ## 3)
+    .replace(/(-{3,})[ \t]*(?=[^\s\-|])/g, "$1\n")
+    // 문장부호·괄호·링크 뒤에 붙은 리스트 항목 (")- **", "]- ", ".- ")
+    .replace(/([)\]。.:])[ \t]*(-[ \t]+)/g, "$1\n$2");
 
   if (work === line) return [line];
 
@@ -509,23 +512,27 @@ function splitInlineHeadingsAndRules(line: string): string[] {
   const out: string[] = [];
   for (const piece of pieces) {
     const pt = piece.trim();
-    const isBlock = /^#{1,6}\s/.test(pt) || /^-{3,}$/.test(pt);
-    if (isBlock && out.length > 0 && out[out.length - 1].trim() !== "") {
-      out.push("");
-    }
+    const isHeadingOrHr = /^#{1,6}\s/.test(pt) || /^-{3,}$/.test(pt);
+    const isList = /^-\s/.test(pt);
+    const prev = out.length > 0 ? out[out.length - 1].trim() : "";
+
+    if (isHeadingOrHr && prev !== "") out.push("");
+    if (isList && prev !== "" && !/^-\s/.test(prev)) out.push("");
     out.push(piece);
-    if (isBlock) out.push("");
+    if (isHeadingOrHr) out.push("");
   }
   return out;
 }
 
 /**
- * 인라인으로 붙어버린 블록 요소(제목·구분선·표 헤더)를 각각 독립된 줄 + 빈 줄로 분리합니다.
- * `[근거 N]` 마커가 블록 시작에 붙어 GFM 파싱이 깨지는 문제를 결정적으로 해결합니다.
- * 코드펜스 내부는 건드리지 않습니다.
+ * 인라인으로 붙어버린 블록 요소(코드펜스·제목·구분선·리스트·표 헤더)를
+ * 각각 독립된 줄 + 빈 줄로 분리합니다. 모델이 줄바꿈 없이 답변을 쏟아내
+ * `###`·`|`·` ``` `·`[..](#evidence-..)`가 그대로 노출되는 문제를 결정적으로 해결합니다.
  */
 function separateInlineBlocks(text: string): string {
-  const lines = text.split("\n");
+  // 코드펜스 마커 앞에 붙은 내용을 먼저 줄바꿈
+  const normalized = text.replace(/([^\n`])(`{3,})/g, "$1\n$2");
+  const lines = normalized.split("\n");
   const out: string[] = [];
   let inFence = false;
 
@@ -533,9 +540,19 @@ function separateInlineBlocks(text: string): string {
     const line = lines[i];
     const trimmed = line.trim();
 
+    // 코드펜스 라인: 여는/닫는 펜스에 붙은 잡음을 다음 줄로 밀어냄
     if (trimmed.startsWith("```")) {
+      const after = trimmed.slice(3).trim();
+      if (out.length > 0 && out[out.length - 1].trim() !== "" && !inFence) {
+        out.push("");
+      }
+      if (!inFence && after && FENCE_LANG_RE.test(after)) {
+        out.push("```" + after);
+      } else {
+        out.push("```");
+        if (after) lines.splice(i + 1, 0, after);
+      }
       inFence = !inFence;
-      out.push(line);
       continue;
     }
     if (inFence) {
@@ -552,7 +569,7 @@ function separateInlineBlocks(text: string): string {
       const prefix = line.slice(0, firstPipe).replace(/\s+$/, "");
       const headerRow = line.slice(firstPipe).replace(/\s+$/, "");
       if (prefix.trim()) {
-        for (const p of splitInlineHeadingsAndRules(prefix)) out.push(p);
+        for (const p of splitInlineBlockLine(prefix)) out.push(p);
         if (out.length > 0 && out[out.length - 1].trim() !== "") out.push("");
         out.push(headerRow);
         continue;
@@ -567,7 +584,7 @@ function separateInlineBlocks(text: string): string {
       continue;
     }
 
-    for (const p of splitInlineHeadingsAndRules(line)) out.push(p);
+    for (const p of splitInlineBlockLine(line)) out.push(p);
   }
 
   return out.join("\n").replace(/\n{3,}/g, "\n\n");

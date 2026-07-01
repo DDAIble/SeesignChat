@@ -4,18 +4,38 @@ import { progressFromServerEvent } from "@/lib/learning-progress";
 import { readJsonResponse } from "@/lib/fetch-json";
 import type { ExcelData } from "@/lib/types";
 
+/** 데스크탑(엑셀 등)에서 파일을 열어둬 잠긴 경우 안내 문구 */
+const FILE_IN_USE_MESSAGE =
+  "현재 데스크탑(엑셀 등)에서 이 파일을 실행 중인 것 같습니다. 실행 중인 파일을 닫은 뒤 다시 업로드해 주세요.";
+
 export async function uploadAndIndexFile(
   file: File,
   onAdd: (data: ExcelData) => void,
   onUpdate: (id: string, patch: Partial<ExcelData>) => void
 ): Promise<void> {
-  const formData = new FormData();
-  formData.append("file", file);
+  // 업로드 전 파일을 먼저 읽어 잠김(다른 프로그램에서 사용 중)을 감지합니다.
+  // Windows에서 엑셀 등으로 파일을 열어두면 여기서 읽기가 실패하거나, 전송 중 fetch가 "Failed to fetch"로 끊깁니다.
+  let buffer: ArrayBuffer;
+  try {
+    buffer = await file.arrayBuffer();
+  } catch {
+    throw new Error(FILE_IN_USE_MESSAGE);
+  }
 
-  const res = await fetch(withBasePath("/api/upload"), {
-    method: "POST",
-    body: formData,
-  });
+  const formData = new FormData();
+  // 읽어둔 메모리 복사본을 전송해 전송 도중 파일 잠김으로 인한 오류를 방지합니다.
+  formData.append("file", new Blob([buffer], { type: file.type }), file.name);
+
+  let res: Response;
+  try {
+    res = await fetch(withBasePath("/api/upload"), {
+      method: "POST",
+      body: formData,
+    });
+  } catch {
+    // fetch가 TypeError("Failed to fetch")로 실패 — 파일 잠김 또는 네트워크 문제
+    throw new Error(FILE_IN_USE_MESSAGE);
+  }
 
   const contentType = res.headers.get("content-type") ?? "";
 

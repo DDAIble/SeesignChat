@@ -66,34 +66,86 @@ function compactRowForContext(
   return row;
 }
 
+/** TSV 셀 값 정규화 — 탭·개행을 공백으로 바꿔 열이 깨지지 않게 합니다. */
+function sanitizeTsvCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value).replace(/[\t\r\n]+/g, " ").trim();
+}
+
+/**
+ * 압축된 행들에서 컬럼 목록을 만듭니다.
+ * 원본 헤더 순서를 우선하고, `__주교재_매칭키` 같은 파생 키는 뒤에 붙입니다.
+ */
+function collectColumns(
+  rows: Record<string, unknown>[],
+  headers: string[]
+): string[] {
+  const seen = new Set<string>();
+  const columns: string[] = [];
+
+  for (const header of headers) {
+    if (rows.some((row) => header in row)) {
+      columns.push(header);
+      seen.add(header);
+    }
+  }
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      if (!seen.has(key)) {
+        columns.push(key);
+        seen.add(key);
+      }
+    }
+  }
+  return columns;
+}
+
+/** 첫 줄 헤더 + 탭 구분 데이터 행 (JSON 대비 키 반복이 없어 토큰 효율이 높음) */
+function rowsToTsv(
+  rows: Record<string, unknown>[],
+  columns: string[]
+): string {
+  const headerLine = columns.map(sanitizeTsvCell).join("\t");
+  const bodyLines = rows.map((row) =>
+    columns.map((column) => sanitizeTsvCell(row[column])).join("\t")
+  );
+  return [headerLine, ...bodyLines].join("\n");
+}
+
 function fitRowsToBudget(
   rows: Record<string, unknown>[],
   headers: string[],
   mode: RowContextMode,
   budget: number,
   maxBodyChars: number
-): { json: string; included: number } {
+): { table: string; included: number } {
   if (budget <= 0 || rows.length === 0) {
-    return { json: "[]", included: 0 };
+    return { table: "", included: 0 };
   }
 
   const ordered = mode === "qa" ? prioritizeRowsForAI(rows, headers) : rows;
   const included: Record<string, unknown>[] = [];
+  let approxLen = 0;
 
   for (const row of ordered) {
     const compact = compactRowForContext(row, headers, mode, maxBodyChars);
-    const next = [...included, compact];
-    const serialized = JSON.stringify(next, null, 2);
-    if (serialized.length > budget) break;
+    let rowLen = 1;
+    for (const key of Object.keys(compact)) {
+      rowLen += sanitizeTsvCell(compact[key]).length + 1;
+    }
+    if (approxLen + rowLen > budget && included.length > 0) break;
     included.push(compact);
+    approxLen += rowLen;
   }
 
   if (included.length === 0 && ordered.length > 0) {
     const single = compactRowForContext(ordered[0], headers, mode, Math.min(maxBodyChars, 500));
-    return { json: JSON.stringify([single], null, 2), included: 1 };
+    const columns = collectColumns([single], headers);
+    return { table: rowsToTsv([single], columns), included: 1 };
   }
 
-  return { json: JSON.stringify(included, null, 2), included: included.length };
+  const columns = collectColumns(included, headers);
+  return { table: rowsToTsv(included, columns), included: included.length };
 }
 
 export function parseExcelBuffer(buffer: ArrayBuffer, fileName: string): ExcelData {
@@ -208,7 +260,7 @@ function buildSingleFileContext(
     const prefixLen = prefixText.length + 100;
     const rowBudget = Math.max(0, budget.remaining - prefixLen);
 
-    const { json, included } = fitRowsToBudget(
+    const { table, included } = fitRowsToBudget(
       sheet.rows,
       sheet.headers,
       mode,
@@ -234,10 +286,11 @@ function buildSingleFileContext(
       parts.push(`- 데이터 (전체 ${sheet.rowCount}행):`);
     }
 
-    parts.push(json);
+    parts.push("- 형식: **TSV** (첫 줄=컬럼 헤더, 이후 각 줄=행, 셀 구분=탭)");
+    parts.push(table);
     parts.push("");
 
-    budget.remaining -= prefixText.length + json.length + 200;
+    budget.remaining -= prefixText.length + table.length + 200;
   }
 
   return parts.join("\n");
