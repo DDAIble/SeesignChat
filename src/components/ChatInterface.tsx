@@ -2,7 +2,7 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useRef, useEffect, useState, useMemo, useCallback } from "react";
+import { useRef, useEffect, useLayoutEffect, useState, useMemo, useCallback } from "react";
 import { Send, Bot, User, Loader2, Sparkles, MessageSquarePlus } from "lucide-react";
 import AnalysisTracePanel from "@/components/AnalysisTracePanel";
 import MarkdownContent from "@/components/MarkdownContent";
@@ -31,8 +31,12 @@ function getMessageText(message: { parts: Array<{ type: string; text?: string }>
 export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const stickToBottomRef = useRef(true);
+  const stickToBottomRef = useRef(false);
   const programmaticScrollRef = useRef(false);
+  const isLoadingRef = useRef(false);
+  /** AI 응답 중 사용자가 스크롤을 움직이면 위치를 고정 */
+  const scrollLockedRef = useRef(false);
+  const scrollLockTopRef = useRef<number | null>(null);
   const SCROLL_PIN_THRESHOLD_PX = 80;
   const [input, setInput] = useState("");
   const [analysisTrace, setAnalysisTrace] = useState<AnalysisTraceData | null>(null);
@@ -119,6 +123,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
   messagesRef.current = messages;
 
   const isLoading = status === "submitted" || status === "streaming";
+  isLoadingRef.current = isLoading;
   const learningProgress = useMemo(
     () => computeAggregateLearningProgress(excelFiles),
     [excelFiles]
@@ -135,8 +140,26 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
     setFollowUpByMessageId({});
     turnCitationsRef.current = null;
     turnFollowUpRef.current = null;
-    stickToBottomRef.current = true;
+    stickToBottomRef.current = false;
+    scrollLockedRef.current = false;
+    scrollLockTopRef.current = null;
   };
+
+  const lockScrollPosition = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    scrollLockedRef.current = true;
+    scrollLockTopRef.current = container.scrollTop;
+    stickToBottomRef.current = false;
+  }, []);
+
+  const restoreLockedScroll = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container || !scrollLockedRef.current || scrollLockTopRef.current === null) return;
+    if (Math.abs(container.scrollTop - scrollLockTopRef.current) < 1) return;
+    programmaticScrollRef.current = true;
+    container.scrollTop = scrollLockTopRef.current;
+  }, []);
 
   const isNearBottom = useCallback((container: HTMLElement) => {
     const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
@@ -161,12 +184,20 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
     if (!container) return;
 
     const handleScroll = () => {
-      // 자동(프로그램) 스크롤이 만든 이벤트는 stick 상태를 바꾸지 않음
       if (programmaticScrollRef.current) {
         programmaticScrollRef.current = false;
         return;
       }
-      // 사용자가 직접 스크롤했을 때만: 바닥 근처면 따라가기, 위로 올렸으면 그 위치 고정
+
+      const container = scrollContainerRef.current;
+      if (!container) return;
+
+      // AI 응답 중에는 사용자 스크롤 위치를 잠금 (브라우저 scroll anchoring 보정)
+      if (isLoadingRef.current) {
+        lockScrollPosition();
+        return;
+      }
+
       stickToBottomRef.current = isNearBottom(container);
     };
 
@@ -174,10 +205,18 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
     return () => {
       container.removeEventListener("scroll", handleScroll);
     };
-  }, [isNearBottom]);
+  }, [isNearBottom, lockScrollPosition]);
+
+  useLayoutEffect(() => {
+    if (!isLoading) {
+      scrollLockedRef.current = false;
+      scrollLockTopRef.current = null;
+      return;
+    }
+    restoreLockedScroll();
+  }, [messages, analysisTrace, citationsByMessageId, isLoading, restoreLockedScroll]);
 
   useEffect(() => {
-    // 분석·스트리밍 중에는 스크롤 위치 고정 (말풍선 따라 내려가지 않음)
     if (isLoading) return;
     scrollToBottomIfAllowed();
   }, [messages, analysisTrace, followUpByMessageId, isLoading, scrollToBottomIfAllowed]);
@@ -197,7 +236,9 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
 
   const handleSend = (text: string) => {
     if (!text.trim() || excelFiles.length === 0 || isLoading || isLearning) return;
-    // AI 답변 스트리밍 중 말풍선을 따라 자동 스크롤하지 않음
+    const container = scrollContainerRef.current;
+    scrollLockedRef.current = true;
+    scrollLockTopRef.current = container?.scrollTop ?? 0;
     stickToBottomRef.current = false;
     setAnalysisTrace({
       headline: "분석을 시작합니다…",
@@ -254,7 +295,10 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
         </button>
       </div>
 
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto p-4 space-y-4 [overflow-anchor:none]"
+      >
         {messages.length === 0 && (
           <div className="space-y-4">
             <div className="flex gap-3">
@@ -285,7 +329,10 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
             isLoading && msg.role === "assistant" && msg.id === lastAssistantMessage?.id;
 
           return (
-          <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+          <div
+            key={msg.id}
+            className={`flex gap-3 [overflow-anchor:none] ${msg.role === "user" ? "flex-row-reverse" : ""}`}
+          >
             <div
               className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                 msg.role === "user" ? "bg-slate-800" : "bg-emerald-100"
@@ -302,8 +349,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
                 msg.role === "user"
                   ? "rounded-tr-sm bg-slate-800 text-white whitespace-pre-wrap"
                   : "rounded-tl-sm bg-slate-100 text-slate-800"
-              }`}
-              aria-live={undefined}
+              }${isStreamingThis ? " [overflow-anchor:none]" : ""}`}
             >
               {msg.role === "assistant" ? (
                 <>
@@ -334,7 +380,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
         })}
 
         {isLoading && analysisTrace && (
-          <div className="flex gap-3">
+          <div className="flex gap-3 [overflow-anchor:none]">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-100">
               <Bot className="h-4 w-4 text-emerald-600" />
             </div>
