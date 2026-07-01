@@ -45,6 +45,15 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
     () =>
       new DefaultChatTransport({
         api: withBasePath("/api/chat"),
+        fetch: async (input, init) => {
+          const res = await fetch(input, init);
+          if (res.status === 413) {
+            throw new Error(
+              "요청 크기가 서버 한도를 초과했습니다. 대화를 새로 시작하거나 파일 수·용량을 줄여 주세요."
+            );
+          }
+          return res;
+        },
       }),
     []
   );
@@ -193,10 +202,9 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
     });
     turnCitationsRef.current = null;
     turnFollowUpRef.current = null;
-    sendMessage(
-      { text },
-      { body: { fileIds: excelFiles.map((f) => f.id), excelFiles } }
-    );
+    // 서버는 fileIds로 Blob/메모리에서 데이터를 조회합니다. excelFiles 전체를내면
+    // JSON 직렬화 시 원본 xlsx보다 커져 Vercel 요청 한도(4.5MB)를 초과할 수 있습니다.
+    sendMessage({ text }, { body: { fileIds: excelFiles.map((f) => f.id) } });
     setInput("");
   };
 
