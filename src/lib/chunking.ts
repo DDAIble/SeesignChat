@@ -1,6 +1,7 @@
 import { formatRowForBatch, formatRowForRAG, sheetLooksLikeCommunityPosts } from "./community-analysis";
 import type { CitationRowData } from "./citations";
 import { compactRowForAI, sheetLooksLikeQA } from "./qa-location";
+import { getMaxQaIndexRows } from "./upload-limits";
 import type { ExcelData } from "./types";
 
 export type ChunkDataType = "community" | "qa" | "general";
@@ -47,14 +48,6 @@ function getRowsPerChunk(): number {
 
 function shouldIndexQA(): boolean {
   return process.env.RAG_INDEX_QA === "true";
-}
-
-/** 대용량 Q&A 시트는 의미검색 임베딩을 생략합니다 (핫스팟·통계는 전수 집계로 동작). */
-const DEFAULT_MAX_QA_INDEX_ROWS = 5000;
-
-function getMaxQAIndexRows(): number {
-  const parsed = Number(process.env.RAG_MAX_QA_INDEX_ROWS);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_QA_INDEX_ROWS;
 }
 
 function getField(row: Record<string, unknown>, ...names: string[]): string {
@@ -259,7 +252,7 @@ export function chunkExcelFile(data: ExcelData): ChunkDraft[] {
 
     if (isQA && !shouldIndexQA()) continue;
     // 대용량 Q&A는 임베딩(의미검색)을 생략 — 핫스팟·통계 분석은 전체 행 전수 집계로 그대로 동작
-    if (isQA && sheet.rows.length > getMaxQAIndexRows()) continue;
+    if (isQA && sheet.rows.length > getMaxQaIndexRows()) continue;
 
     const dataType: ChunkDataType = isCommunity ? "community" : isQA ? "qa" : "general";
 

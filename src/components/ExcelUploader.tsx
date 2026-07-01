@@ -1,14 +1,18 @@
 ﻿"use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Upload, FileSpreadsheet, Loader2, X, Plus } from "lucide-react";
+import { withBasePath } from "@/lib/base-path";
 import { uploadAndIndexFile } from "@/lib/upload-and-index";
 import type { ExcelData } from "@/lib/types";
+import type { UploadLimits } from "@/lib/upload-limits";
 
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
-/** 서버 검증 기본값(UPLOAD_MAX_TOTAL_ROWS)과 동일 — 분석 가능한 최대 행 수 안내용 */
-const MAX_ANALYZE_ROWS = 200_000;
+const DEFAULT_LIMITS: UploadLimits = {
+  maxTotalRows: 200_000,
+  maxQaIndexRows: 5000,
+};
 const VALID_EXTENSIONS = [".xlsx", ".xls", ".csv"];
 
 interface ExcelUploaderProps {
@@ -28,6 +32,16 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
   const [isDragging, setIsDragging] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [limits, setLimits] = useState<UploadLimits>(DEFAULT_LIMITS);
+
+  useEffect(() => {
+    void fetch(withBasePath("/api/upload/limits"))
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: UploadLimits | null) => {
+        if (data?.maxTotalRows && data?.maxQaIndexRows) setLimits(data);
+      })
+      .catch(() => undefined);
+  }, []);
 
   const remainingSlots = MAX_FILES - files.length;
 
@@ -155,10 +169,12 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
             : "엑셀 파일을 드래그하거나 클릭"}
       </p>
       <p className="mt-1 text-xs text-slate-500">
-        통계·게시글·후기·Q&A 등 · 최대 {MAX_FILES}개 · 파일당 최대 {MAX_ANALYZE_ROWS.toLocaleString()}행
+        통계·게시글·후기·Q&A 등 · 최대 {MAX_FILES}개 · 파일당 최대{" "}
+        {limits.maxTotalRows.toLocaleString()}행까지 분석
       </p>
       <p className="mt-1 text-[11px] leading-4 text-slate-400">
-        대용량 파일은 의미검색 학습을 자동 생략하지만, 통계·Q&A 핫스팟 분석은 전체 행 기준으로 제공됩니다.
+        Q&A 파일은 {limits.maxQaIndexRows.toLocaleString()}행까지 의미검색 학습 · 초과 시 학습 생략
+        (핫스팟·통계 분석은 전체 행 기준)
       </p>
     </div>
   );

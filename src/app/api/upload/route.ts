@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { parseExcelBuffer } from "@/lib/excel";
 import { indexExcelFile } from "@/lib/rag";
+import { getUploadMaxTotalRows } from "@/lib/upload-limits";
 import { persistUploadData } from "@/lib/upload-persistence";
 import type { ExcelData } from "@/lib/types";
 
@@ -8,7 +9,6 @@ export const maxDuration = 300;
 
 const DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
 const DEFAULT_MAX_SHEETS = 30;
-const DEFAULT_MAX_TOTAL_ROWS = 200_000;
 
 function getPositiveEnvInt(name: string, fallback: number): number {
   const parsed = Number(process.env[name]);
@@ -17,7 +17,7 @@ function getPositiveEnvInt(name: string, fallback: number): number {
 
 function validateParsedData(data: ExcelData): string | null {
   const maxSheets = getPositiveEnvInt("UPLOAD_MAX_SHEETS", DEFAULT_MAX_SHEETS);
-  const maxTotalRows = getPositiveEnvInt("UPLOAD_MAX_TOTAL_ROWS", DEFAULT_MAX_TOTAL_ROWS);
+  const maxTotalRows = getUploadMaxTotalRows();
 
   if (data.sheets.length > maxSheets) {
     return `시트가 너무 많습니다. (최대 ${maxSheets.toLocaleString()}개)`;
