@@ -177,8 +177,10 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
   }, [isNearBottom]);
 
   useEffect(() => {
+    // 분석·스트리밍 중에는 스크롤 위치 고정 (말풍선 따라 내려가지 않음)
+    if (isLoading) return;
     scrollToBottomIfAllowed();
-  }, [messages, analysisTrace, followUpByMessageId, scrollToBottomIfAllowed]);
+  }, [messages, analysisTrace, followUpByMessageId, isLoading, scrollToBottomIfAllowed]);
 
   useEffect(() => {
     if (turnCitationsRef.current) {
@@ -195,7 +197,8 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
 
   const handleSend = (text: string) => {
     if (!text.trim() || excelFiles.length === 0 || isLoading || isLearning) return;
-    stickToBottomRef.current = true;
+    // AI 답변 스트리밍 중 말풍선을 따라 자동 스크롤하지 않음
+    stickToBottomRef.current = false;
     setAnalysisTrace({
       headline: "분석을 시작합니다…",
       steps: [{ id: "start", label: "요청 수신", status: "running" }],
@@ -300,7 +303,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
                   ? "rounded-tr-sm bg-slate-800 text-white whitespace-pre-wrap"
                   : "rounded-tl-sm bg-slate-100 text-slate-800"
               }`}
-              aria-live={msg.role === "assistant" && isStreamingThis ? "polite" : undefined}
+              aria-live={undefined}
             >
               {msg.role === "assistant" ? (
                 <>
