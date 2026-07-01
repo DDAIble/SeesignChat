@@ -12,8 +12,8 @@ import {
 import { createAnalysisTraceEmitter } from "@/lib/analysis-trace";
 import { buildCommunityAggregationReport } from "@/lib/community-aggregation";
 import { collectCommunitySheets, sheetLooksLikeCommunityPosts } from "@/lib/community-analysis";
-import { collectKnownKeywordsFromData } from "@/lib/community-text-utils";
-import { detectCommunityQueryIntent, extractKeywordsFromQuery, isCommunityCountIntent, shouldUseSummaryRag } from "@/lib/community-query-intent";
+import { emptyCommunityQueryIntent, isCommunityCountIntent, resolveRagSearchTerms, shouldUseSummaryRag } from "@/lib/community-query-intent";
+import { approachLabel, classifyCommunityQuery } from "@/lib/community-query-router";
 import { searchCommunityRowsByPhrases } from "@/lib/community-phrase-search";
 import {
   buildCommunityCorpus,
@@ -161,6 +161,8 @@ function buildSystemPrompt(
   const communityCountRules = options.useCommunityCountRules
     ? `
 ## 커뮤니티 키워드 건수 — 반드시 지킬 규칙
+- 이 규칙은 사용자가 **몇 건·언급 횟수·일별/월별 추이·비율·분포·차트**를 명시적으로 물었을 때만 적용합니다.
+- **절대 금지**: 「뭘 원해」「관심사가 뭐야」「무엇을 갖고 싶어」 같은 **정성 질문**에 질문 속 단어(선물로, 진짜, 최대, 가지고 등)의 **출현 빈도·키워드별 건수 표**로 답하기.
 - **### 커뮤니티 키워드 집계** 섹션의 표 숫자만 사용하세요.
 - chart JSON의 data·values·series는 **집계표 숫자와 정확히 일치**해야 합니다.
 - 집계표에 없는 날짜·키워드 조합의 숫자를 만들지 마세요.
@@ -185,6 +187,9 @@ function buildSystemPrompt(
     ? `
 ## 커뮤니티 맥락·여론 요약 — 반드시 지킬 규칙
 - **하이브리드 RAG** 검색 결과 청크 **텍스트만** 근거로 주제·여론·반응을 서술하세요.
+- 사용자가 **관심사·선물·위시리스트·무엇을 원하는지**를 물으면, RAG 청크에서 **실제로 언급된 물건·브랜드·카테고리·니즈**를 주제별로 묶어 답하세요.
+- **절대 금지**: 질문에 나온 단어(선물로, 진짜, 최대, 뭐야 등)를 키워드로 잡아 **언급 건수·빈도 표**를 만들거나 형태소별 통계로 답하기.
+- **절대 금지**: 「선물로 N건」「진짜 N건」처럼 부분 문자열 매칭 건수를 관심사 분석의 핵심 답변으로 쓰기.
 - RAG 청크 본문의 \`[52]\` 형태 **행 번호**를 사용하세요. **한 불릿(문장)당 근거 태그는 딱 하나**만 붙이세요.
 - 형식: \`[근거 N:52,58,61]\` (N=청크 번호, 쉼표=같은 청크 내 참조 행 전부). **여러 청크**를 썼으면 \`[근거 2:52,58;3:71,72]\` (\`;\`로 청크 구분).
 - **절대 금지**: \`[근거 2:52] [근거 2:58]\` 처럼 행마다 태그 나누기, 파일명·\`51~75행\` 텍스트 직접 쓰기.
@@ -245,7 +250,8 @@ ${communitySummaryRules}
 ${communitySourceLookupRules}
 
 ## 정성 데이터 — 커뮤니티 게시글·텍스트
-- **'질문 관련 검색 결과 (하이브리드 RAG)'** 섹션이 있으면, 벡터+키워드로 선별한 청크입니다. **주제·여론 요약**에만 사용하세요. 건수·통계에는 사용하지 마세요.
+- **'질문 관련 검색 결과 (하이브리드 RAG)'** 섹션이 있으면, 벡터+키워드로 선별한 청크입니다. **주제·여론·관심사·선물·니즈 요약**에 사용하세요. 건수·통계에는 사용하지 마세요.
+- **키워드 집계 표**는 **건수·추이·비율** 질문에만 사용하세요. 「무엇을 원해」「관심사가 뭐야」 질문에는 **RAG 본문 요약**으로 답하세요.
 - **'커뮤니티 키워드 집계'**, **'인용 가능 원문'**, **'출처 추적 검색'** 섹션이 있으면 해당 섹션을 1순위 근거로 사용하세요.
 - 답변 본문에는 **[1], [2]** 같은 단순 인용 번호를 쓰지 마세요. 근거는 **한 문장당** \`[근거 N:52,58]\` 또는 \`[근거 2:52;3:71]\` **태그 하나**만 사용하세요. 마크다운 링크·\`[출처]\`·\`#evidence-\` 형식 직접 작성 금지.
 - 강조는 마크다운 **볼드**를 사용하세요. 예: **단 것**, **재미있는 사담**. 강조 기호와 글자 사이에 공백을 넣지 마세요 (잘못된 예: ** 단 것 **).
@@ -617,11 +623,28 @@ export async function POST(request: Request) {
         let dataContext = baseContext;
 
         const communitySheets = collectCommunitySheets(excelFilesResolved);
-        const communityIntent = detectCommunityQueryIntent(
-          userQuery,
-          excelFilesResolved,
-          uploads.communityRows > 0
-        );
+
+        let communityIntent = emptyCommunityQueryIntent();
+        if (uploads.communityRows > 0) {
+          trace.upsertStep({
+            id: "query-router",
+            label: "질문 의도 파악",
+            status: "running",
+            detail: "질문 맥락을 읽고 분석 방식을 결정합니다",
+          });
+
+          const routed = await classifyCommunityQuery(model, userQuery, {
+            files: excelFilesResolved,
+            fileNames: excelFilesResolved.map((file) => file.fileName),
+            totalCommunityRows: uploads.communityRows,
+          });
+          communityIntent = routed.intent;
+
+          trace.patchStep("query-router", {
+            status: "done",
+            detail: `${approachLabel(routed.plan.approach)} — ${routed.plan.reasoning}`,
+          });
+        }
         let quoteCorpus: string[] = [];
         let useCommunityCountRules = false;
         let useCommunityQuoteRules = false;
@@ -752,10 +775,7 @@ export async function POST(request: Request) {
         trace.patchStep("context", { status: "done" });
 
         const ragFileIds = excelFilesResolved.map((file) => file.id);
-        const ragKeywords =
-          communityIntent.keywords.length > 0
-            ? communityIntent.keywords
-            : extractKeywordsFromQuery(userQuery, collectKnownKeywordsFromData(communitySheets));
+        const ragKeywords = resolveRagSearchTerms(communityIntent);
 
         let needRAG = false;
         if (

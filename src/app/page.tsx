@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import Image from "next/image";
 import { ArrowLeft, ArrowRight, CircleHelp, Database } from "lucide-react";
 import ExcelUploader from "@/components/ExcelUploader";
@@ -12,7 +12,12 @@ import type { ExcelData } from "@/lib/types";
 
 export default function Home() {
   const [excelFiles, setExcelFiles] = useState<ExcelData[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
   const uploadedFileIds = useMemo(() => excelFiles.map((f) => f.id), [excelFiles]);
+
+  const handleUploadingChange = useCallback((uploading: boolean) => {
+    setIsUploading(uploading);
+  }, []);
 
   useCleanupUploadsOnLeave(uploadedFileIds);
 
@@ -99,6 +104,7 @@ export default function Home() {
               onUpdate={handleUpdate}
               onRemove={handleRemove}
               onClearAll={handleClearAll}
+              onUploadingChange={handleUploadingChange}
             />
 
             <a
@@ -124,7 +130,7 @@ export default function Home() {
         </aside>
 
         <main className="flex flex-1 flex-col min-w-0 bg-white">
-          <ChatInterface excelFiles={excelFiles} />
+          <ChatInterface excelFiles={excelFiles} isUploading={isUploading} />
         </main>
       </div>
     </div>

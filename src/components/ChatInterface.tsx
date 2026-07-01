@@ -8,7 +8,7 @@ import AnalysisTracePanel from "@/components/AnalysisTracePanel";
 import MarkdownContent from "@/components/MarkdownContent";
 import CitationListPanel from "@/components/CitationListPanel";
 import LearningProgressBar from "@/components/LearningProgressBar";
-import { computeAggregateLearningProgress } from "@/lib/learning-progress";
+import { isFileProcessing, resolveLearningProgressDisplay } from "@/lib/learning-progress";
 import { isAnalysisTraceData, type AnalysisTraceData } from "@/lib/analysis-trace";
 import { isCitationData, type CitationSource } from "@/lib/citations";
 import FollowUpQuestions from "@/components/FollowUpQuestions";
@@ -19,6 +19,7 @@ import type { ExcelData } from "@/lib/types";
 
 interface ChatInterfaceProps {
   excelFiles: ExcelData[];
+  isUploading?: boolean;
 }
 
 function getMessageText(message: { parts: Array<{ type: string; text?: string }> }): string {
@@ -28,7 +29,7 @@ function getMessageText(message: { parts: Array<{ type: string; text?: string }>
     .join("");
 }
 
-export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
+export default function ChatInterface({ excelFiles, isUploading = false }: ChatInterfaceProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(false);
@@ -125,10 +126,10 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
   const isLoading = status === "submitted" || status === "streaming";
   isLoadingRef.current = isLoading;
   const learningProgress = useMemo(
-    () => computeAggregateLearningProgress(excelFiles),
-    [excelFiles]
+    () => resolveLearningProgressDisplay(excelFiles, isUploading),
+    [excelFiles, isUploading]
   );
-  const isLearning = learningProgress.isIndexing;
+  const isFileBusy = isFileProcessing(excelFiles, isUploading);
 
   const handleNewChat = () => {
     if (isLoading) stop();
@@ -235,7 +236,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
   }, [messages, attachCitationsToLatestAssistant, attachFollowUpToLatestAssistant]);
 
   const handleSend = (text: string) => {
-    if (!text.trim() || excelFiles.length === 0 || isLoading || isLearning) return;
+    if (!text.trim() || excelFiles.length === 0 || isLoading || isFileBusy) return;
     const container = scrollContainerRef.current;
     scrollLockedRef.current = true;
     scrollLockTopRef.current = container?.scrollTop ?? 0;
@@ -253,7 +254,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
   };
 
   const handleRetry = () => {
-    if (isLoading || isLearning) return;
+    if (isLoading || isFileBusy) return;
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const lastUserText = lastUser ? getMessageText(lastUser) : "";
     clearError();
@@ -306,7 +307,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
                 <Bot className="h-4 w-4 text-emerald-600" />
               </div>
               <div className="rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-3 text-sm text-slate-700">
-                {isLearning ? (
+                {isFileBusy ? (
                   <>
                     <strong>{excelFiles.length}개</strong> 파일이 업로드되었습니다. SEE:SIGN이 내용을
                     학습하는 동안 잠시만 기다려 주세요. 학습이 끝나면 바로 질문하실 수 있습니다.
@@ -367,7 +368,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
                     <FollowUpQuestions
                       questions={followUpByMessageId[msg.id] ?? []}
                       onSelect={handleSend}
-                      disabled={isLoading || isLearning}
+                      disabled={isLoading || isFileBusy}
                     />
                   )}
                 </>
@@ -412,7 +413,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
               <button
                 type="button"
                 onClick={handleRetry}
-                disabled={isLoading || isLearning}
+                disabled={isLoading || isFileBusy}
                 className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 다시 시도
@@ -432,7 +433,7 @@ export default function ChatInterface({ excelFiles }: ChatInterfaceProps) {
       </div>
 
       <div className="border-t border-slate-200 p-4">
-        {isLearning ? (
+        {isFileBusy ? (
           <LearningProgressBar progress={learningProgress} />
         ) : (
           <form

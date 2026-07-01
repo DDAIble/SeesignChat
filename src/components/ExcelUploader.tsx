@@ -20,6 +20,7 @@ interface ExcelUploaderProps {
   onUpdate: (id: string, patch: Partial<ExcelData>) => void;
   onRemove: (id: string) => void;
   onClearAll?: () => void;
+  onUploadingChange?: (uploading: boolean) => void;
 }
 
 function hasValidExtension(file: File): boolean {
@@ -27,7 +28,7 @@ function hasValidExtension(file: File): boolean {
   return VALID_EXTENSIONS.includes(ext);
 }
 
-export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClearAll }: ExcelUploaderProps) {
+export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClearAll, onUploadingChange }: ExcelUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +44,14 @@ export default function ExcelUploader({ files, onAdd, onUpdate, onRemove, onClea
       })
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    onUploadingChange?.(isParsing);
+  }, [isParsing, onUploadingChange]);
+
+  useEffect(() => {
+    return () => onUploadingChange?.(false);
+  }, [onUploadingChange]);
 
   const remainingSlots = MAX_FILES - files.length;
 

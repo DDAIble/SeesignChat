@@ -38,6 +38,29 @@ export interface AggregateLearningProgress {
   detail: string;
 }
 
+const UPLOADING_PROGRESS: AggregateLearningProgress = {
+  isIndexing: true,
+  percent: 4,
+  headline: "업로드된 파일을 분석하고 있습니다…",
+  detail: "",
+};
+
+/** 업로드 파싱·인덱싱 중이면 대화 입력을 막아야 합니다. */
+export function isFileProcessing(files: ExcelData[], isUploading: boolean): boolean {
+  if (isUploading) return true;
+  return files.some((f) => f.indexStatus === "indexing");
+}
+
+export function resolveLearningProgressDisplay(
+  files: ExcelData[],
+  isUploading: boolean
+): AggregateLearningProgress {
+  const aggregate = computeAggregateLearningProgress(files);
+  if (aggregate.isIndexing) return aggregate;
+  if (isUploading) return UPLOADING_PROGRESS;
+  return aggregate;
+}
+
 export function computeAggregateLearningProgress(files: ExcelData[]): AggregateLearningProgress {
   const indexing = files.filter((f) => f.indexStatus === "indexing");
   if (indexing.length === 0) {
