@@ -5,3 +5,8 @@ export function withBasePath(path: string): string {
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return `${basePath}${normalized}`;
 }
+
+/** public/ 정적 파일 URL (basePath 포함) */
+export function publicAsset(path: string): string {
+  return withBasePath(path);
+}

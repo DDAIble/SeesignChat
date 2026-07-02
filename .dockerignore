@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.env
+.env.*
+npm-debug.log*
+Dockerfile
+.dockerignore
+*.md
+terminals
+agent-transcripts
+*.xlsx
+*.xls
+*.csv

@@ -11,7 +11,7 @@ import type { UploadLimits } from "@/lib/upload-limits";
 
 const MAX_FILES = 5;
 const DEFAULT_LIMITS: UploadLimits = {
-  maxFileBytes: Math.floor(4.5 * 1024 * 1024),
+  maxFileBytes: 30 * 1024 * 1024,
 };
 const VALID_EXTENSIONS = [".xlsx", ".xls", ".csv"];
 

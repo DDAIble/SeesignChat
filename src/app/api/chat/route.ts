@@ -50,7 +50,7 @@ const AGG_CITATION_BASE = 300;
 const QUANT_CITATION_BASE = 600;
 
 const TOKEN_LIMIT_MESSAGE =
-  "업로드된 데이터가 커서 AI 입력 한도를 초과했습니다. 파일 수·용량을 줄인 뒤 같은 질문을 다시 보내 주세요. (대화 화면은 그대로 유지됩니다.)";
+  "업로드된 데이터가 AI 입력 한도를 초과했습니다. 파일 수·용량을 줄인 뒤 같은 질문을 다시 보내 주세요. (대화 화면은 그대로 유지됩니다.)";
 const GENERIC_ANSWER_ERROR_MESSAGE =
   "답변을 생성하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
 const SOURCE_LOOKUP_DISCLAIMER =

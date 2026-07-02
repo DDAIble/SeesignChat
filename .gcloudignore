@@ -1,0 +1,11 @@
+.git
+node_modules
+.next
+.env
+.env.*
+terminals
+agent-transcripts
+*.xlsx
+*.xls
+*.csv
+npm-debug.log*

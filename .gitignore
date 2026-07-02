@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# GCP deploy keys (never commit)
+*-deploy-key.json
+github-excel-ai-chat-deploy-key.json

@@ -1,7 +1,16 @@
 import type { UIMessage } from "ai";
 
-/** Vercel 요청 한도(4.5MB) 아래로 유지 */
-const TARGET_MAX_BYTES = 3_200_000;
+/**
+ * 요청 본문 상한.
+ * - Vercel: 요청 한도(약 4.5MB) 아래로 유지하려고 기본 3.2MB.
+ * - Cloud Run: CHAT_MAX_REQUEST_BYTES 환경변수로 더 크게 설정 가능.
+ */
+function getTargetMaxBytes(): number {
+  const parsed = Number(process.env.CHAT_MAX_REQUEST_BYTES);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 3_200_000;
+}
+
+const TARGET_MAX_BYTES = getTargetMaxBytes();
 const MAX_MESSAGE_WINDOW = 12;
 const MAX_ASSISTANT_CHARS = 4_000;
 const MAX_USER_CHARS = 4_000;

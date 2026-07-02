@@ -1,8 +1,8 @@
 ﻿"use client";
 
 import { useMemo, useState, useCallback } from "react";
-import Image from "next/image";
 import { ArrowLeft, ArrowRight, CircleHelp, Database } from "lucide-react";
+import { publicAsset } from "@/lib/base-path";
 import ExcelUploader from "@/components/ExcelUploader";
 import DataPreview from "@/components/DataPreview";
 import ChatInterface from "@/components/ChatInterface";
@@ -57,12 +57,11 @@ export default function Home() {
       <header className="shrink-0 border-b border-slate-200 bg-white px-6 py-4">
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4">
           <div className="flex items-center gap-3 min-w-0">
-            <Image
-              src="/aible_logo.svg"
+            <img
+              src={publicAsset("/aible_logo.svg")}
               alt="SEE:SIGN"
               width={154}
               height={38}
-              priority
               className="h-9 w-auto"
             />
             <div className="min-w-0">

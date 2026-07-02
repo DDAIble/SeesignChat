@@ -1,61 +1,46 @@
-import { del, get, head, put } from "@vercel/blob";
 import type { ExcelData } from "./types";
 import { getUploadData, removeUploadData, storeUploadData } from "./upload-data-store";
+import { getUploadBlobStore, isBlobPersistenceEnabled } from "./storage";
+
+export { isBlobPersistenceEnabled } from "./storage";
 
 const BLOB_PREFIX = "excel-data";
-const BLOB_ACCESS = "private" as const;
 
 function blobPath(fileId: string): string {
   return `${BLOB_PREFIX}/${fileId}.json`;
-}
-
-/** Vercel Blob 사용 가능 여부 (read-write token 또는 OIDC + store id) */
-export function isBlobPersistenceEnabled(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID);
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function persistToBlob(data: ExcelData): Promise<void> {
-  await put(blobPath(data.id), JSON.stringify(data), {
-    access: BLOB_ACCESS,
-    addRandomSuffix: false,
-    contentType: "application/json",
-  });
+async function persistToStore(data: ExcelData): Promise<void> {
+  const store = getUploadBlobStore();
+  await store.put(blobPath(data.id), JSON.stringify(data));
 
   for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      await head(blobPath(data.id));
-      return;
-    } catch {
-      if (attempt < 4) await sleep(300 * (attempt + 1));
-    }
+    if (await store.head(blobPath(data.id))) return;
+    if (attempt < 4) await sleep(300 * (attempt + 1));
   }
 }
 
-async function loadFromBlob(fileId: string): Promise<ExcelData | undefined> {
-  if (!isBlobPersistenceEnabled()) return undefined;
+async function loadFromStore(fileId: string): Promise<ExcelData | undefined> {
+  const store = getUploadBlobStore();
+  if (!store.enabled) return undefined;
 
+  const text = await store.get(blobPath(fileId));
+  if (!text) return undefined;
   try {
-    const result = await get(blobPath(fileId), { access: BLOB_ACCESS });
-    if (!result || result.statusCode !== 200 || !result.stream) return undefined;
-    const text = await new Response(result.stream).text();
     return JSON.parse(text) as ExcelData;
   } catch {
     return undefined;
   }
 }
 
-async function deleteFromBlob(fileId: string): Promise<void> {
-  if (!isBlobPersistenceEnabled()) return;
-
-  try {
-    await del(blobPath(fileId));
-  } catch {
-    // missing blob is fine
-  }
+async function deleteFromStore(fileId: string): Promise<void> {
+  const store = getUploadBlobStore();
+  if (!store.enabled) return;
+  await store.delete(blobPath(fileId));
 }
 
 export async function persistUploadData(data: ExcelData): Promise<void> {
@@ -64,9 +49,9 @@ export async function persistUploadData(data: ExcelData): Promise<void> {
   if (!isBlobPersistenceEnabled()) return;
 
   try {
-    await persistToBlob(data);
+    await persistToStore(data);
   } catch (error) {
-    console.error("Blob persist failed (in-memory upload kept):", error);
+    console.error("Upload persist failed (in-memory upload kept):", error);
   }
 }
 
@@ -75,10 +60,10 @@ export async function resolveUploadData(fileId: string): Promise<ExcelData | und
   if (cached) return cached;
 
   for (let attempt = 0; attempt < 5; attempt++) {
-    const fromBlob = await loadFromBlob(fileId);
-    if (fromBlob) {
-      storeUploadData(fromBlob);
-      return fromBlob;
+    const fromStore = await loadFromStore(fileId);
+    if (fromStore) {
+      storeUploadData(fromStore);
+      return fromStore;
     }
     if (attempt < 4) await sleep(400 * (attempt + 1));
   }
@@ -88,7 +73,7 @@ export async function resolveUploadData(fileId: string): Promise<ExcelData | und
 
 export async function removePersistedUploadData(fileId: string): Promise<void> {
   removeUploadData(fileId);
-  await deleteFromBlob(fileId);
+  await deleteFromStore(fileId);
 }
 
 export async function resolveExcelFiles(
